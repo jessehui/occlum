@@ -6,7 +6,7 @@ services:
 before_install:
 - pwd
 - cd ..
-- docker run -v /home/travis/build/jessehui/occlum:/root/occlum occlum/occlum:latest /bin/bash -c "cd /root/occlum; make; make test; echo Done"
+- docker run -v /home/travis/build/jessehui/occlum:/root/occlum occlum/occlum:latest /bin/bash -c "cd /root/occlum; make submodule; make; make test; echo Done"
 
 script:
 - echo done
