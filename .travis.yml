@@ -4,6 +4,7 @@ services:
   - docker
 
 before_install:
+- cd jessehui/occlum
 - docker run occlum/occlum:latest /bin/bash -c "cd demos/hello_c; make; ./hello_world"
 
 script:
