@@ -6,10 +6,8 @@ services:
   - docker
 
 before_install:
-- docker run -d occlum/occlum:latest /bin/bash -c "cd demos/helloc_c; make; ./hello_world"
+- docker run occlum/occlum:latest /bin/bash -c "cd demos/helloc_c; make; ./hello_world"
 
 script:
-- cd demos/hello_c
-- make
-- ./hello_world
+- echo done
 - sleep 3
