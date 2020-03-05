@@ -12,3 +12,4 @@ script:
 - cd demos/hello_c
 - make
 - ./hello_world
+- sleep 3
