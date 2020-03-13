@@ -10,6 +10,7 @@
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include "test.h"
+#include <syslog.h>
 
 // ============================================================================
 // Test cases for sched_cpu_affinity
@@ -29,12 +30,48 @@ static int test_sched_getaffinity_with_self_pid() {
     return 0;
 }
 
+static unsigned long GetCpuMask(cpu_set_t* cpuSet)
+{
+    unsigned long mask = 0;
+    const int maxCpus = CPU_SETSIZE < 64?CPU_SETSIZE:64;
+    for (int cpu = 0; cpu < maxCpus; cpu++){
+        mask |= CPU_ISSET(cpu, cpuSet)? 1ll<<cpu : 0;
+    }
+    return mask;
+}
+
+unsigned long GetThreadAffinityMask()
+{
+    cpu_set_t cpuSet;
+
+    if (!sched_getaffinity(0, sizeof(cpu_set_t), &cpuSet)){
+        return GetCpuMask(&cpuSet);
+    }
+    syslog (LOG_ERR, "sched_getaffinity fails, errno %d:%s", errno, strerror(errno));
+    return 0;
+}
+
 static int test_sched_setaffinity_with_self_pid() {
     int nproc = sysconf(_SC_NPROCESSORS_ONLN);
     cpu_set_t mask_old;
     for (int i = 0; i < nproc; ++i) {
         CPU_SET(i, &mask_old);
     }
+
+    cpu_set_t testCpuSet;
+    for (int cpu = 0; cpu < 16; cpu++){
+        CPU_ZERO(&testCpuSet);
+        CPU_SET(cpu, &testCpuSet);
+        unsigned long try_mask = GetCpuMask(&testCpuSet);
+        if (!sched_setaffinity(0, sizeof(cpu_set_t), &testCpuSet)){
+            syslog (LOG_INFO, "sched_setaffinity OK, cpu %d (mask 0x%x)",cpu, try_mask);
+            unsigned long new_mask = GetThreadAffinityMask();
+            syslog (LOG_INFO, "new_mask 0x%x", new_mask);
+        } else {
+            syslog (LOG_INFO, "sched_setaffinity, cpu %d errno %d:%s", cpu, errno, strerror(errno));
+        }
+    }
+
     cpu_set_t mask;
     CPU_ZERO(&mask);
     CPU_SET(0, &mask);
