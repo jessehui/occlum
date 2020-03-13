@@ -17,9 +17,14 @@ This set of demos shows how real-world apps can be easily run inside SGX enclave
 * `https_server/`: A HTTPS file server based on [Mongoose Embedded Web Server Library](https://github.com/cesanta/mongoose).
 * `grpc/`: A client and server communicating through [gRPC](https://grpc.io/).
 * `openvino/` A benchmark of [OpenVINO Inference Engine](https://docs.openvinotoolkit.org/2019_R3/_docs_IE_DG_inference_engine_intro.html).
+* `python` A demo of [Python](https://www.python.org).
+* `sqlite` A demo of [SQLite](https://www.sqlite.org) SQL database engine.
 * `tensorflow_lite/`: A demo and benchmark of [Tensorflow Lite](https://www.tensorflow.org/lite) inference engine.
 * `xgboost/`: A demo of [XGBoost](https://xgboost.readthedocs.io/en/latest/).
 
-## SGX capability demos
+## Other demos
 
+* `embedded_mode/`: A cross-enclave memory throughput benchmark enabled by the embedded mode of Occlum.
+* `gdb_support/`: This demo explains the technical detail of GDB support and demonstrates how to debug an app running upon Occlum with GDB.
+* `local_attestation/`: This project demonstrates how an app running upon Occlum can perform SGX local attestation.
 * `remote_attestation/`: This project demonstrates how an app running upon Occlum can perform SGX remote attestation.

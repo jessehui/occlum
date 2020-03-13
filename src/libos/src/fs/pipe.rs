@@ -12,14 +12,18 @@ pub struct Pipe {
 }
 
 impl Pipe {
-    pub fn new() -> Result<Pipe> {
+    pub fn new(flags: StatusFlags) -> Result<Pipe> {
         let mut ring_buf = RingBuf::new(PIPE_BUF_SIZE);
+        // Only O_NONBLOCK and O_DIRECT can be applied during pipe creation
+        let valid_flags = flags & (StatusFlags::O_NONBLOCK | StatusFlags::O_DIRECT);
         Ok(Pipe {
             reader: PipeReader {
                 inner: SgxMutex::new(ring_buf.reader),
+                status_flags: SgxRwLock::new(valid_flags),
             },
             writer: PipeWriter {
                 inner: SgxMutex::new(ring_buf.writer),
+                status_flags: SgxRwLock::new(valid_flags),
             },
         })
     }
@@ -28,6 +32,7 @@ impl Pipe {
 #[derive(Debug)]
 pub struct PipeReader {
     inner: SgxMutex<RingBufReader>,
+    status_flags: SgxRwLock<StatusFlags>,
 }
 
 impl File for PipeReader {
@@ -60,7 +65,24 @@ impl File for PipeReader {
         Ok(total_bytes)
     }
 
-    fn as_any(&self) -> &Any {
+    fn get_access_mode(&self) -> Result<AccessMode> {
+        Ok(AccessMode::O_RDONLY)
+    }
+
+    fn get_status_flags(&self) -> Result<StatusFlags> {
+        let status_flags = self.status_flags.read().unwrap();
+        Ok(status_flags.clone())
+    }
+
+    fn set_status_flags(&self, new_status_flags: StatusFlags) -> Result<()> {
+        let mut status_flags = self.status_flags.write().unwrap();
+        // Only O_NONBLOCK, O_ASYNC and O_DIRECT can be set
+        *status_flags = new_status_flags
+            & (StatusFlags::O_NONBLOCK | StatusFlags::O_ASYNC | StatusFlags::O_DIRECT);
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
@@ -71,6 +93,7 @@ unsafe impl Sync for PipeReader {}
 #[derive(Debug)]
 pub struct PipeWriter {
     inner: SgxMutex<RingBufWriter>,
+    status_flags: SgxRwLock<StatusFlags>,
 }
 
 impl File for PipeWriter {
@@ -107,10 +130,43 @@ impl File for PipeWriter {
         return_errno!(ESPIPE, "Pipe does not support seek")
     }
 
-    fn as_any(&self) -> &Any {
+    fn get_access_mode(&self) -> Result<AccessMode> {
+        Ok(AccessMode::O_WRONLY)
+    }
+
+    fn get_status_flags(&self) -> Result<StatusFlags> {
+        let status_flags = self.status_flags.read().unwrap();
+        Ok(status_flags.clone())
+    }
+
+    fn set_status_flags(&self, new_status_flags: StatusFlags) -> Result<()> {
+        let mut status_flags = self.status_flags.write().unwrap();
+        // Only O_NONBLOCK, O_ASYNC and O_DIRECT can be set
+        *status_flags = new_status_flags
+            & (StatusFlags::O_NONBLOCK | StatusFlags::O_ASYNC | StatusFlags::O_DIRECT);
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
 
 unsafe impl Send for PipeWriter {}
 unsafe impl Sync for PipeWriter {}
+
+pub fn do_pipe2(flags: u32) -> Result<[FileDesc; 2]> {
+    info!("pipe2: flags: {:#x}", flags);
+    let creation_flags = CreationFlags::from_bits_truncate(flags);
+    let current_ref = process::get_current();
+    let current = current_ref.lock().unwrap();
+    let pipe = Pipe::new(StatusFlags::from_bits_truncate(flags))?;
+
+    let file_table_ref = current.get_files();
+    let mut file_table = file_table_ref.lock().unwrap();
+    let close_on_spawn = creation_flags.must_close_on_spawn();
+    let reader_fd = file_table.put(Arc::new(Box::new(pipe.reader)), close_on_spawn);
+    let writer_fd = file_table.put(Arc::new(Box::new(pipe.writer)), close_on_spawn);
+    info!("pipe2: reader_fd: {}, writer_fd: {}", reader_fd, writer_fd);
+    Ok([reader_fd, writer_fd])
+}

@@ -1,14 +1,16 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <spawn.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <spawn.h>
-#include <unistd.h>
 
 #include "test.h"
 
@@ -63,13 +65,13 @@ int connect_with_child(int port, int *child_pid) {
 
 int neogotiate_msg(int client_fd) {
     char buf[16];
-    if (write(client_fd, ECHO_MSG, sizeof(ECHO_MSG)) < 0)
+    if (write(client_fd, ECHO_MSG, strlen(ECHO_MSG)) < 0)
         THROW_ERROR("write failed");
 
     if (read(client_fd, buf, 16) < 0)
         THROW_ERROR("read failed");
 
-    if (strncmp(buf, RESPONSE, sizeof(RESPONSE)) != 0) {
+    if (strncmp(buf, RESPONSE, strlen(RESPONSE)) != 0) {
         THROW_ERROR("msg recv mismatch");
     }
     return 0;
@@ -82,7 +84,7 @@ int server_recv(int client_fd) {
     if (recv(client_fd, buf, buf_size, 0) <= 0)
         THROW_ERROR("msg recv failed");
 
-    if (strncmp(buf, ECHO_MSG, sizeof(ECHO_MSG)) != 0) {
+    if (strncmp(buf, ECHO_MSG, strlen(ECHO_MSG)) != 0) {
         THROW_ERROR("msg recv mismatch");
     }
     return 0;
@@ -90,17 +92,21 @@ int server_recv(int client_fd) {
 
 int server_recvmsg(int client_fd) {
     int ret = 0;
-    const int buf_size = 1000;
-    char buf[buf_size];
+    const int buf_size = 10;
+    char buf[3][buf_size];
     struct msghdr msg;
-    struct iovec iov[1];
+    struct iovec iov[3];
 
     msg.msg_name  = NULL;
     msg.msg_namelen  = 0;
-    iov[0].iov_base = buf;
+    iov[0].iov_base = buf[0];
     iov[0].iov_len = buf_size;
+    iov[1].iov_base = buf[1];
+    iov[1].iov_len = buf_size;
+    iov[2].iov_base = buf[2];
+    iov[2].iov_len = buf_size;
     msg.msg_iov = iov;
-    msg.msg_iovlen = 1;
+    msg.msg_iovlen = 3;
     msg.msg_control = 0;
     msg.msg_controllen = 0;
     msg.msg_flags = 0;
@@ -109,11 +115,18 @@ int server_recvmsg(int client_fd) {
     if (ret <= 0) {
         THROW_ERROR("recvmsg failed");
     } else {
-        if (strncmp(buf, ECHO_MSG, sizeof(ECHO_MSG)) != 0) {
-            printf("recvmsg : %d, msg: %s\n", ret, buf);
+        if (strncmp(buf[0], ECHO_MSG, buf_size) != 0 &&
+                strstr(ECHO_MSG, buf[1]) != NULL &&
+                strstr(ECHO_MSG, buf[2]) != NULL) {
+            printf("recvmsg : %d, msg: %s,  %s, %s\n", ret, buf[0], buf[1], buf[2]);
             THROW_ERROR("msg recvmsg mismatch");
         }
     }
+    msg.msg_iov = NULL;
+    msg.msg_iovlen = 0;
+    ret = recvmsg(client_fd, &msg, 0);
+    if (ret != 0)
+        THROW_ERROR("recvmsg empty failed");
     return ret;
 }
 
@@ -156,7 +169,7 @@ int server_connectionless_recvmsg() {
     if (ret <= 0) {
         THROW_ERROR("recvmsg failed");
     } else {
-        if (strncmp(buf, DEFAULT_MSG, sizeof(DEFAULT_MSG)) != 0) {
+        if (strncmp(buf, DEFAULT_MSG, strlen(DEFAULT_MSG)) != 0) {
             printf("recvmsg : %d, msg: %s\n", ret, buf);
             THROW_ERROR("msg recvmsg mismatch");
         } else {
@@ -250,11 +263,61 @@ int test_sendmsg_recvmsg_connectionless() {
 
     return ret;
 }
+
+int test_fcntl_setfl_and_getfl() {
+    int ret = 0;
+    int child_pid = 0;
+    int client_fd = -1;
+    int original_flags, actual_flags;
+
+    client_fd = connect_with_child(8804, &child_pid);
+    if (client_fd < 0)
+        THROW_ERROR("connect failed");
+    original_flags = fcntl(client_fd, F_GETFL, 0);
+    if (original_flags < 0)
+        THROW_ERROR("fcntl getfl failed");
+
+    ret = fcntl(client_fd, F_SETFL, original_flags | O_NONBLOCK);
+    if (ret < 0)
+        THROW_ERROR("fcntl setfl failed");
+
+    actual_flags = fcntl(client_fd, F_GETFL, 0);
+    if (actual_flags != (original_flags | O_NONBLOCK))
+        THROW_ERROR("check the getfl value after setfl failed");
+
+    ret = wait_for_child_exit(child_pid);
+
+    return ret;
+}
+
+int test_poll_sockets() {
+    int socks[2], ret;
+    socks[0] = socket(AF_INET, SOCK_STREAM, 0);
+    socks[1] = socket(AF_INET, SOCK_STREAM, 0);
+    struct pollfd pollfds[] = {
+        { .fd = socks[0], .events = POLLIN },
+        { .fd = socks[1], .events = POLLIN },
+    };
+
+    ret = poll(pollfds, 2, 0);
+    if (ret < 0)
+        THROW_ERROR("poll error");
+
+    if (pollfds[0].fd != socks[0] ||
+        pollfds[0].events != POLLIN ||
+        pollfds[1].fd != socks[1] ||
+        pollfds[1].events != POLLIN)
+        THROW_ERROR("fd and events of pollfd should remain unchanged");
+    return 0;
+}
+
 static test_case_t test_cases[] = {
     TEST_CASE(test_read_write),
     TEST_CASE(test_send_recv),
     TEST_CASE(test_sendmsg_recvmsg),
     TEST_CASE(test_sendmsg_recvmsg_connectionless),
+    TEST_CASE(test_fcntl_setfl_and_getfl),
+    TEST_CASE(test_poll_sockets),
 };
 
 int main(int argc, const char* argv[]) {

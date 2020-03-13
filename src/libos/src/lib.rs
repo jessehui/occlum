@@ -1,14 +1,14 @@
 #![allow(unused)]
-#![crate_name = "occlum_rs"]
+#![crate_name = "occlum_libos_core_rs"]
 #![crate_type = "staticlib"]
 #![cfg_attr(not(target_env = "sgx"), no_std)]
 #![cfg_attr(target_env = "sgx", feature(rustc_private))]
-#![feature(alloc)]
 #![feature(allocator_api)]
-#![feature(range_contains)]
 #![feature(core_intrinsics)]
 #![feature(stmt_expr_attributes)]
 #![feature(atomic_min_max)]
+#![feature(no_more_cas)]
+#![feature(alloc_layout_extra)]
 
 #[macro_use]
 extern crate alloc;
@@ -61,6 +61,7 @@ mod net;
 mod process;
 mod syscall;
 mod time;
+mod untrusted;
 mod util;
 mod vm;
 

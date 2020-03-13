@@ -1,23 +1,5 @@
 use super::*;
 
-extern "C" {
-    fn ocall_sched_getaffinity(
-        ret: *mut i32,
-        errno: *mut i32,
-        pid: i32,
-        cpusetsize: size_t,
-        mask: *mut c_uchar,
-    ) -> sgx_status_t;
-    fn ocall_sched_setaffinity(
-        ret: *mut i32,
-        errno: *mut i32,
-        pid: i32,
-        cpusetsize: size_t,
-        mask: *const c_uchar,
-    ) -> sgx_status_t;
-    fn ocall_sched_yield() -> sgx_status_t;
-}
-
 pub struct CpuSet {
     vec: Vec<u8>,
 }
@@ -64,7 +46,7 @@ impl CpuSet {
 impl std::fmt::LowerHex for CpuSet {
     fn fmt(&self, fmtr: &mut std::fmt::Formatter) -> std::fmt::Result {
         for byte in &(self.vec) {
-            try!(fmtr.write_fmt(format_args!("{:02x}", byte)));
+            fmtr.write_fmt(format_args!("{:02x}", byte))?;
         }
         Ok(())
     }
@@ -73,7 +55,7 @@ impl std::fmt::LowerHex for CpuSet {
 impl std::fmt::UpperHex for CpuSet {
     fn fmt(&self, fmtr: &mut std::fmt::Formatter) -> std::fmt::Result {
         for byte in &(self.vec) {
-            try!(fmtr.write_fmt(format_args!("{:02X}", byte)));
+            fmtr.write_fmt(format_args!("{:02X}", byte))?;
         }
         Ok(())
     }
@@ -86,47 +68,58 @@ fn find_host_tid(pid: pid_t) -> Result<pid_t> {
     Ok(host_tid)
 }
 
-pub fn do_sched_getaffinity(pid: pid_t, cpu_set: &mut CpuSet) -> Result<i32> {
+pub fn do_sched_getaffinity(pid: pid_t, cpu_set: &mut CpuSet) -> Result<usize> {
     let host_tid = match pid {
         0 => 0,
         _ => find_host_tid(pid)?,
     };
     let buf = cpu_set.as_mut_ptr();
     let cpusize = cpu_set.len();
-    let mut ret = 0;
-    let mut error = 0;
-    unsafe {
-        ocall_sched_getaffinity(&mut ret, &mut error, host_tid as i32, cpusize, buf);
-    }
-    if (ret < 0) {
-        let errno = Errno::from(error as u32);
-        return_errno!(errno, "ocall_sched_getaffinity failed");
-    }
-    Ok(ret)
+    let retval = try_libc!({
+        let mut retval = 0;
+        let sgx_status = occlum_ocall_sched_getaffinity(&mut retval, host_tid as i32, cpusize, buf);
+        assert!(sgx_status == sgx_status_t::SGX_SUCCESS);
+        retval
+    }) as usize;
+    // Note: the first retval bytes in CpuSet are valid
+    Ok(retval)
 }
 
-pub fn do_sched_setaffinity(pid: pid_t, cpu_set: &CpuSet) -> Result<i32> {
+pub fn do_sched_setaffinity(pid: pid_t, cpu_set: &CpuSet) -> Result<()> {
     let host_tid = match pid {
         0 => 0,
         _ => find_host_tid(pid)?,
     };
     let buf = cpu_set.as_ptr();
     let cpusize = cpu_set.len();
-    let mut ret = 0;
-    let mut error = 0;
-    unsafe {
-        ocall_sched_setaffinity(&mut ret, &mut error, host_tid as i32, cpusize, buf);
-    }
-    if (ret < 0) {
-        let errno = Errno::from(error as u32);
-        return_errno!(errno, "ocall_sched_setaffinity failed");
-    }
-    Ok(ret)
+    try_libc!({
+        let mut retval = 0;
+        let sgx_status = occlum_ocall_sched_setaffinity(&mut retval, host_tid as i32, cpusize, buf);
+        assert!(sgx_status == sgx_status_t::SGX_SUCCESS);
+        retval
+    });
+    Ok(())
 }
 
 pub fn do_sched_yield() {
     unsafe {
-        let status = ocall_sched_yield();
+        let status = occlum_ocall_sched_yield();
         assert!(status == sgx_status_t::SGX_SUCCESS);
     }
+}
+
+extern "C" {
+    fn occlum_ocall_sched_getaffinity(
+        ret: *mut i32,
+        host_tid: i32,
+        cpusetsize: size_t,
+        mask: *mut c_uchar,
+    ) -> sgx_status_t;
+    fn occlum_ocall_sched_setaffinity(
+        ret: *mut i32,
+        host_tid: i32,
+        cpusetsize: size_t,
+        mask: *const c_uchar,
+    ) -> sgx_status_t;
+    fn occlum_ocall_sched_yield() -> sgx_status_t;
 }

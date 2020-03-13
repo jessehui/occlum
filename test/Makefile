@@ -1,14 +1,20 @@
 CUR_DIR := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 PROJECT_DIR := $(realpath $(CUR_DIR)/../)
-BUILD_DIR := $(PROJECT_DIR)/build
+SGX_MODE ?= HW
+
+ifneq ($(SGX_MODE), HW)
+	BUILD_DIR := $(PROJECT_DIR)/build_sim
+else
+	BUILD_DIR := $(PROJECT_DIR)/build
+endif
 
 # Dependencies: need to be compiled but not to run by any Makefile target
 TEST_DEPS := client data_sink
 # Tests: need to be compiled and run by test-% target
 TESTS := empty env hello_world malloc mmap file fs_perms getpid spawn sched pipe time \
-	truncate readdir mkdir link tls pthread uname rlimit server \
+	truncate readdir mkdir link symlink tls pthread uname rlimit server \
 	server_epoll unix_socket cout hostfs cpuid rdtsc device sleep exit_group \
-	ioctl
+	ioctl fcntl
 # Benchmarks: need to be compiled and run by bench-% target
 BENCHES := spawn_and_exit_latency pipe_throughput unix_socket_throughput
 
@@ -40,7 +46,7 @@ prebuild:
 	@$(RM) -rf $(BUILD_DIR)/test
 	@mkdir -p $(BUILD_DIR)/test
 	@cd $(BUILD_DIR)/test && \
-		$(PROJECT_DIR)/build/bin/occlum init
+		$(BUILD_DIR)/bin/occlum init
 	@cp Occlum.json Enclave.xml $(BUILD_DIR)/test/
 
 $(BUILD_TARGETS): %:
@@ -50,7 +56,7 @@ $(BUILD_TARGETS): %:
 
 postbuild:
 	@cd $(BUILD_DIR)/test && \
-		$(PROJECT_DIR)/build/bin/occlum build
+		$(BUILD_DIR)/bin/occlum build
 
 #############################################################################
 # Test targets

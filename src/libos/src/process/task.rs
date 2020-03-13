@@ -7,6 +7,8 @@ use super::*;
 #[repr(C)]
 pub struct Task {
     kernel_rsp: usize,
+    kernel_stack_base: usize,
+    kernel_stack_limit: usize,
     kernel_fs: usize,
     user_rsp: usize,
     user_stack_base: usize,
@@ -53,27 +55,39 @@ impl Task {
 }
 
 lazy_static! {
-    static ref NEW_PROCESS_QUEUE: SgxMutex<VecDeque<ProcessRef>> =
-        { SgxMutex::new(VecDeque::new()) };
+    static ref NEW_PROCESS_TABLE: SgxMutex<HashMap<pid_t, ProcessRef>> =
+        { SgxMutex::new(HashMap::new()) };
 }
 
-pub fn enqueue_task(new_process: ProcessRef) {
-    NEW_PROCESS_QUEUE.lock().unwrap().push_back(new_process);
+pub fn enqueue_task(new_tid: pid_t, new_process: ProcessRef) {
+    let existing_task = NEW_PROCESS_TABLE
+        .lock()
+        .unwrap()
+        .insert(new_tid, new_process);
+    // There should NOT have any pending process with the same ID
+    assert!(existing_task.is_none());
+}
+
+pub fn enqueue_and_exec_task(new_tid: pid_t, new_process: ProcessRef) {
+    enqueue_task(new_tid, new_process);
 
     let mut ret = 0;
-    let ocall_status = unsafe { ocall_run_new_task(&mut ret) };
+    let ocall_status = unsafe { occlum_ocall_exec_thread_async(&mut ret, new_tid) };
     if ocall_status != sgx_status_t::SGX_SUCCESS || ret != 0 {
         panic!("Failed to start the process");
     }
 }
 
-fn dequeue_task() -> Option<ProcessRef> {
-    NEW_PROCESS_QUEUE.lock().unwrap().pop_front()
+fn dequeue_task(libos_tid: pid_t) -> Result<ProcessRef> {
+    NEW_PROCESS_TABLE
+        .lock()
+        .unwrap()
+        .remove(&libos_tid)
+        .ok_or_else(|| errno!(EAGAIN, "the given TID does not match any pending process"))
 }
 
-pub fn run_task(host_tid: pid_t) -> Result<i32> {
-    let new_process: ProcessRef =
-        dequeue_task().ok_or_else(|| errno!(EAGAIN, "no new processes to run"))?;
+pub fn run_task(libos_tid: pid_t, host_tid: pid_t) -> Result<i32> {
+    let new_process: ProcessRef = dequeue_task(libos_tid)?;
     set_current(&new_process);
 
     let (pid, task) = {
@@ -84,19 +98,34 @@ pub fn run_task(host_tid: pid_t) -> Result<i32> {
         (pid, task)
     };
 
+    #[cfg(feature = "syscall_timing")]
+    GLOBAL_PROFILER
+        .lock()
+        .unwrap()
+        .thread_enter()
+        .expect("unexpected error from profiler to enter thread");
+
     unsafe {
         // task may only be modified by this function; so no lock is needed
         do_run_task(task);
     }
 
-    let exit_status = {
+    #[cfg(feature = "syscall_timing")]
+    GLOBAL_PROFILER
+        .lock()
+        .unwrap()
+        .thread_exit()
+        .expect("unexpected error from profiler to exit thread");
+
+    let (exit_status, parent_pid) = {
         let mut process = new_process.lock().unwrap();
-        process.get_exit_status()
+        let parent = process.get_parent().lock().unwrap();
+        (process.get_exit_status(), parent.get_tid())
     };
 
-    // Init process does not have any parent, so it has to release itself
-    if pid == 1 {
-        process_table::remove(1);
+    // If process's parent is the IDLE_PROCESS (pid = 0), so it has to release itself
+    if parent_pid == 0 {
+        process_table::remove(pid);
     }
 
     reset_current();
@@ -148,6 +177,6 @@ fn reset_current() {
 }
 
 extern "C" {
-    fn ocall_run_new_task(ret: *mut i32) -> sgx_status_t;
+    fn occlum_ocall_exec_thread_async(ret: *mut i32, libos_tid: pid_t) -> sgx_status_t;
     fn do_run_task(task: *mut Task) -> i32;
 }
