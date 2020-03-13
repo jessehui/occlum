@@ -6,7 +6,7 @@ pub use self::futex::{
 pub use self::process::{Status, IDLE_PROCESS};
 pub use self::process_table::get;
 pub use self::sched::{do_sched_getaffinity, do_sched_setaffinity, do_sched_yield, CpuSet};
-pub use self::spawn::{do_spawn, ElfFile, FileAction, ProgramHeaderExt};
+pub use self::spawn::{do_spawn, do_spawn_without_exec, ElfFile, FileAction, ProgramHeaderExt};
 pub use self::task::{current_pid, get_current, run_task};
 pub use self::thread::{do_clone, do_set_tid_address, CloneFlags, ThreadGroup};
 pub use self::wait::{WaitQueue, Waiter};
@@ -26,6 +26,7 @@ pub struct Process {
     // TODO: move cwd, root_inode into a FileSystem structure
     // TODO: should cwd be a String or INode?
     cwd: String,
+    elf_path: String,
     clear_child_tid: Option<*mut pid_t>,
     parent: Option<ProcessRef>,
     children: Vec<ProcessWeakRef>,
@@ -85,4 +86,5 @@ use self::task::Task;
 use super::*;
 use fs::{File, FileRef, FileTable};
 use misc::ResourceLimitsRef;
+use time::GLOBAL_PROFILER;
 use vm::ProcessVM;

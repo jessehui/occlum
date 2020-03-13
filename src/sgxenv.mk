@@ -2,11 +2,29 @@ MAIN_MAKEFILE := $(firstword $(MAKEFILE_LIST))
 INCLUDE_MAKEFILE := $(lastword $(MAKEFILE_LIST))
 CUR_DIR := $(shell dirname $(realpath $(MAIN_MAKEFILE)))
 PROJECT_DIR := $(realpath $(CUR_DIR)/../../)
-BUILD_DIR := $(PROJECT_DIR)/build
 
 SGX_SDK ?= /opt/intel/sgxsdk
 SGX_MODE ?= HW
 SGX_ARCH ?= x64
+
+ifneq ($(SGX_MODE), HW)
+	BUILD_DIR := $(PROJECT_DIR)/build_sim
+else
+	BUILD_DIR := $(PROJECT_DIR)/build
+endif
+
+# for sgxenv.mk in .occlum
+ifeq ($(CONTEXT), 1)
+	BUILD_DIR := $(PROJECT_DIR)/build
+endif
+
+# If OCCLUM_RELEASE_BUILD equals to 1, y, or yes, then build in release mode
+OCCLUM_RELEASE_BUILD ?= 0
+ifeq ($(OCCLUM_RELEASE_BUILD), yes)
+	OCCLUM_RELEASE_BUILD := 1
+else ifeq ($(OCCLUM_RELEASE_BUILD), y)
+	OCCLUM_RELEASE_BUILD := 1
+endif
 
 ifeq ($(shell getconf LONG_BIT), 32)
 	SGX_ARCH := x86
@@ -14,7 +32,7 @@ else ifeq ($(findstring -m32, $(CXXFLAGS)), -m32)
 	SGX_ARCH := x86
 endif
 
-SGX_COMMON_CFLAGS := -Wall
+SGX_COMMON_CFLAGS := -Wall -std=gnu11
 
 ifeq ($(SGX_ARCH), x86)
 	SGX_COMMON_CFLAGS += -m32
@@ -28,25 +46,20 @@ else
 	SGX_EDGER8R := $(SGX_SDK)/bin/x64/sgx_edger8r
 endif
 
-ifeq ($(SGX_DEBUG), 1)
-ifeq ($(SGX_PRERELEASE), 1)
-$(error Cannot set SGX_DEBUG and SGX_PRERELEASE at the same time!!)
-endif
-endif
-
-ifeq ($(SGX_DEBUG), 1)
-	SGX_COMMON_CFLAGS += -O0 -g
-else
+ifeq ($(OCCLUM_RELEASE_BUILD), 1)
 	SGX_COMMON_CFLAGS += -O2
+else
+	SGX_COMMON_CFLAGS += -O0 -g
 endif
 
 RUST_SGX_SDK_DIR := $(PROJECT_DIR)/deps/rust-sgx-sdk
-SGX_COMMON_CFLAGS += -I$(RUST_SGX_SDK_DIR)/common/ -I$(RUST_SGX_SDK_DIR)/edl/
 
 ifneq ($(SGX_MODE), HW)
 	Urts_Library_Name := sgx_urts_sim
+	SGX_COMMON_CFLAGS += -D SGX_MODE_SIM
 else
 	Urts_Library_Name := sgx_urts
+	SGX_COMMON_CFLAGS += -D SGX_MODE_HW
 endif
 
 ifneq ($(SGX_MODE), HW)
@@ -64,7 +77,8 @@ ProtectedFs_Library_Name := sgx_tprotected_fs
 #
 # Export flags used to compile or link untrusted modules
 #
-SGX_CFLAGS_U := $(SGX_COMMON_CFLAGS) -fPIC -Wno-attributes -I$(SGX_SDK)/include
+SGX_CFLAGS_U := $(SGX_COMMON_CFLAGS) -fPIC -Wno-attributes \
+	-I$(RUST_SGX_SDK_DIR)/edl -I$(SGX_SDK)/include
 SGX_CXXFLAGS_U := $(SGX_CFLAGS_U) -std=c++11
 
 SGX_LFLAGS_U := $(SGX_COMMON_CFLAGS) -lpthread -L$(SGX_LIBRARY_PATH) -l$(Urts_Library_Name)
@@ -78,7 +92,7 @@ endif
 # Export flags used to compile or link untrusted modules
 #
 SGX_CFLAGS_T := $(SGX_COMMON_CFLAGS) -nostdinc -fvisibility=hidden -fpie -fstack-protector \
-	-I$(RUST_SGX_SDK_DIR)/common/inc/ -I$(SGX_SDK)/include -I$(SGX_SDK)/include/tlibc
+	-I$(RUST_SGX_SDK_DIR)/common/inc -I$(RUST_SGX_SDK_DIR)/edl -I$(SGX_SDK)/include -I$(SGX_SDK)/include/tlibc
 SGX_CXXFLAGS_T := $(SGX_CFLAGS_T) -std=c++11 -nostdinc++ -I$(SGX_SDK)/include/libcxx
 
 # Before use this linker flag, the user should define $(_Other_Enclave_Libs),
@@ -105,7 +119,7 @@ SGX_CXXFLAGS_T := $(SGX_CFLAGS_T) -std=c++11 -nostdinc++ -I$(SGX_SDK)/include/li
 #  linked.
 SGX_LFLAGS_T = $(SGX_COMMON_CFLAGS) -nostdlib -L$(SGX_LIBRARY_PATH) $(_Other_Link_Flags) \
 	-Wl,--whole-archive -l$(Trts_Library_Name) -Wl,--no-whole-archive \
-	-Wl,--start-group -lsgx_tstdc -lsgx_tcxx -l$(Crypto_Library_Name) -l$(Service_Library_Name) $(_Other_Enclave_Libs) -Wl,--end-group \
+	-Wl,--start-group -lsgx_tcxx -lsgx_tstdc -l$(Crypto_Library_Name) -l$(Service_Library_Name) $(_Other_Enclave_Libs) -Wl,--end-group \
 	-Wl,-Bstatic -Wl,-Bsymbolic -Wl,--no-undefined \
 	-Wl,-pie,-eenclave_entry -Wl,--export-dynamic  \
 	-Wl,--defsym,__ImageBase=0 \

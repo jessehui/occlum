@@ -3,7 +3,7 @@ use super::*;
 mod recv;
 mod send;
 
-use fs::{File, FileRef, IoctlCmd};
+use fs::{AccessMode, CreationFlags, File, FileRef, IoctlCmd, StatusFlags};
 use std::any::Any;
 use std::io::{Read, Seek, SeekFrom, Write};
 
@@ -111,7 +111,31 @@ impl File for SocketFile {
         Ok(())
     }
 
-    fn as_any(&self) -> &Any {
+    fn get_access_mode(&self) -> Result<AccessMode> {
+        Ok(AccessMode::O_RDWR)
+    }
+
+    fn get_status_flags(&self) -> Result<StatusFlags> {
+        let ret = try_libc!(libc::ocall::fcntl_arg0(self.fd(), libc::F_GETFL));
+        Ok(StatusFlags::from_bits_truncate(ret as u32))
+    }
+
+    fn set_status_flags(&self, new_status_flags: StatusFlags) -> Result<()> {
+        let valid_flags_mask = StatusFlags::O_APPEND
+            | StatusFlags::O_ASYNC
+            | StatusFlags::O_DIRECT
+            | StatusFlags::O_NOATIME
+            | StatusFlags::O_NONBLOCK;
+        let raw_status_flags = (new_status_flags & valid_flags_mask).bits();
+        try_libc!(libc::ocall::fcntl_arg1(
+            self.fd(),
+            libc::F_SETFL,
+            raw_status_flags as c_int
+        ));
+        Ok(())
+    }
+
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
