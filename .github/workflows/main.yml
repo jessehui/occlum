@@ -28,6 +28,9 @@ jobs:
     # Runs a set of commands using the runners shell
     - name: Check format
       run: |
+        echo $PATH
+        ls -la
+        cd /opt/occlum
         ls -la
         cd /github/home
         info=$(make format-check)
