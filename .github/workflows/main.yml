@@ -39,10 +39,7 @@ jobs:
         fi
         
     - name: Build dependencies
-      run: |
-        pwd
-        rustup default nightly
-        make submodule
+      run:  make submodule
       
     - name: Build src
       run: |
