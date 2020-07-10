@@ -31,9 +31,6 @@ jobs:
         echo Add other actions to build,
         echo test, and deploy your project.
         
-    - name: Set up environment
-      run: source /opt/intel/sgxsdk/environment
-
     # Runs a set of commands using the runners shell
     - name: Check format
       run: |
