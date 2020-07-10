@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-18.04
     env:
         OCCLUM_VERSION: 0.13.0
-    container: occlum/occlum:${{env.OCCLUM_VERSION}}
+    container: occlum/occlum:0.13.0
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
