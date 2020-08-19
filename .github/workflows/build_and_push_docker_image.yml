@@ -1,7 +1,9 @@
 name: Occlum Docker Build and Push
 
 # Controls when the action will run. Triggers the workflow on release events
-on: [push]
+on:
+  release:
+    types: [published]
 
 jobs:
   generate-centos-image:
