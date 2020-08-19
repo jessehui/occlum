@@ -3,9 +3,6 @@ name: Occlum Docker Build and Push
 # Controls when the action will run. Triggers the workflow on release events
 on: [push]
 
-env:
-  RELEASE_VERSION: $(echo ${GITHUB_REF:10})
-
 jobs:
   generate-centos-image:
       # GitHub Actions doesn't have CentOS VM provided
@@ -59,27 +56,17 @@ jobs:
   test-new-ubuntu-image:
     runs-on: ubuntu-18.04
     needs: generate-ubuntu-image
-    container: occlumbackup/occlum:${{ env.RELEASE_VERSION }}-ubuntu18.04
 
     steps:
     - uses: actions/checkout@v1
       with:
         submodules: true
 
-    - name: Set Toolchains
-      run: rustup default $OCCLUM_RUST_VERSION
-
-    - name: Build Dependencies
-      run:  make submodule
-
-    - name: Build Source
+    - name: integration test for new image
       run: |
-        OCCLUM_RELEASE_BUILD=y SGX_MODE=SIM make
-
-    - name: Integration Test
-      run: |
-        SGX_MODE=SIM make test
-
+        docker run -v $HOME:/root/occlum occlum/occlum:${{ needs.generate-ubuntu-image.env.RELEASE_VERSION }}-ubuntu18.04 /bin/bash -c 'cd /root/occlum; \
+          make submodule; SGX_MODE=SIM make; SGX_MODE=SIM make test'
+      
 #   test-new-centos-image:
 #     runs-on: ubuntu-18.04
 #     needs: generate-centos-image
