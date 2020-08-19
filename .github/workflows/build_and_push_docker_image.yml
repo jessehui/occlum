@@ -5,6 +5,9 @@ on:
   release:
     types: [published]
 
+env:
+  RELEASE_VERSION: $(echo ${GITHUB_REF:10})
+
 jobs:
   generate-centos-image:
       # GitHub Actions doesn't have CentOS VM provided
@@ -82,26 +85,28 @@ jobs:
 
       
 
-#   test-new-centos-image:
-#     runs-on: ubuntu-18.04
-#     needs: generate-centos-image
-#     container: occlumbackup/occlum:${{ needs.generate-centos-image.env.RELEASE_VERSION }}-centos8.1
+  test-new-centos-image:
+    runs-on: ubuntu-18.04
+    needs: generate-ubuntu-image
 
-#     steps:
-#     - uses: actions/checkout@v1
-#       with:
-#         submodules: true
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        submodules: true
 
-#     - name: Set Toolchains
-#       run: rustup default $OCCLUM_RUST_VERSION
+    - name: Get release version
+      run: echo ::set-env name=RELEASE_VERSION::$(echo ${GITHUB_REF:10})
 
-#     - name: Build Dependencies
-#       run:  make submodule
+    - name: Create container with new image
+      run: |
+        docker run -itd --name=ubuntu-test -v $GITHUB_WORKSPACE:/root/occlum occlumbackup/occlum:${{ env.RELEASE_VERSION }}-centos18.04
 
-#     - name: Build Source
-#       run: |
-#         OCCLUM_RELEASE_BUILD=y SGX_MODE=SIM make
+    - name: Build Dependencies
+      run:  docker exec ubuntu-test bash -c "cd /root/occlum; make submodule"
+    
+    - name: Build Source
+      run:  docker exec ubuntu-test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=y SGX_MODE=SIM make"
+    
+    - name: Integration Test
+      run:  docker exec ubuntu-test bash -c "cd /root/occlum; SGX_MODE=SIM make test"
 
-#     - name: Integration Test
-#       run: |
-#         SGX_MODE=SIM make test
