@@ -69,7 +69,7 @@ jobs:
 
     - name: integration test for new image
       run: |
-        docker run -v $HOME:/root/occlum occlum/occlum:${{ env.RELEASE_VERSION }}-ubuntu18.04 /bin/bash -c 'cd /root/occlum; \
+        docker run -v $HOME:/root/occlum occlumbackup/occlum:${{ env.RELEASE_VERSION }}-ubuntu18.04 /bin/bash -c 'cd /root/occlum; \
           make submodule; SGX_MODE=SIM make; SGX_MODE=SIM make test'
       
 #   test-new-centos-image:
