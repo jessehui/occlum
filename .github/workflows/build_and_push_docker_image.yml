@@ -67,11 +67,21 @@ jobs:
     - name: Get release version
       run: echo ::set-env name=RELEASE_VERSION::$(echo ${GITHUB_REF:10})
 
-    - name: integration test for new image
+    - name: Create container with new image
       run: |
-        docker run -v $HOME:/root/occlum occlumbackup/occlum:${{ env.RELEASE_VERSION }}-ubuntu18.04 /bin/bash -c 'cd /root/occlum; \
-          make submodule; SGX_MODE=SIM make; SGX_MODE=SIM make test'
+        docker run -itd --name=ubuntu-test -v $GITHUB_WORKSPACE:/root/occlum occlumbackup/occlum:${{ env.RELEASE_VERSION }}-ubuntu18.04
+
+    - name: Build Dependencies
+      run:  docker exec ubuntu-test bash -c "cd /root/occlum; make submodule"
+    
+    - name: Build Source
+      run:  docker exec ubuntu-test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=y SGX_MODE=SIM make"
+    
+    - name: Integration Test
+      run:  docker exec ubuntu-test bash -c "cd /root/occlum; SGX_MODE=SIM make test"
+
       
+
 #   test-new-centos-image:
 #     runs-on: ubuntu-18.04
 #     needs: generate-centos-image
