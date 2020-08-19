@@ -53,8 +53,8 @@ jobs:
 
   test-new-ubuntu-image:
     runs-on: ubuntu-18.04
-    container: occlumbackup/occlum:${{ needs.generate-ubuntu-image.env.RELEASE_VERSION }}-ubuntu18.04
     needs: generate-ubuntu-image
+    container: occlumbackup/occlum:${{ needs.generate-ubuntu-image.env.RELEASE_VERSION }}-ubuntu18.04
 
     steps:
     - uses: actions/checkout@v1
@@ -77,8 +77,8 @@ jobs:
 
   test-new-centos-image:
     runs-on: ubuntu-18.04
-    container: occlumbackup/occlum:${{ needs.generate-centos-image.env.RELEASE_VERSION }}-centos8.1
     needs: generate-centos-image
+    container: occlumbackup/occlum:${{ needs.generate-centos-image.env.RELEASE_VERSION }}-centos8.1
 
     steps:
     - uses: actions/checkout@v1
