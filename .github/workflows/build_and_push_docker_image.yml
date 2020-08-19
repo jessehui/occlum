@@ -3,6 +3,9 @@ name: Occlum Docker Build and Push
 # Controls when the action will run. Triggers the workflow on release events
 on: [push]
 
+env:
+  RELEASE_VERSION: $(echo ${GITHUB_REF:10})
+
 jobs:
   generate-centos-image:
       # GitHub Actions doesn't have CentOS VM provided
@@ -18,7 +21,9 @@ jobs:
 
       - name: Get release version
         id: get_version
-        run: echo ::set-env name=RELEASE_VERSION::$(echo ${GITHUB_REF:10}) # Get RELEASE_VERSION from "ref/tags/<version>"
+        run: |
+          echo ${{ env.RELEASE_VERSION }}
+          echo ::set-env name=RELEASE_VERSION::$(echo ${GITHUB_REF:10}) # Get RELEASE_VERSION from "ref/tags/<version>"
 
 #       - name: Build and Push Docker images
 #         uses: docker/build-push-action@v1
@@ -54,7 +59,7 @@ jobs:
   test-new-ubuntu-image:
     runs-on: ubuntu-18.04
     needs: generate-ubuntu-image
-    container: \"occlumbackup/occlum:$(echo ${GITHUB_REF:10})-ubuntu18.04\"
+    container: occlumbackup/occlum:${{ env.RELEASE_VERSION }}-ubuntu18.04
 
     steps:
     - uses: actions/checkout@v1
