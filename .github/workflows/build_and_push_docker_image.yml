@@ -54,7 +54,7 @@ jobs:
   test-new-ubuntu-image:
     runs-on: ubuntu-18.04
     needs: generate-ubuntu-image
-    container: "occlumbackup/occlum:$(echo ${GITHUB_REF:10})-ubuntu18.04"
+    container: \"occlumbackup/occlum:$(echo ${GITHUB_REF:10})-ubuntu18.04\"
 
     steps:
     - uses: actions/checkout@v1
