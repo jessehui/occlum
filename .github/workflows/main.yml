@@ -4,7 +4,7 @@ name: OCCLUM CI
 on: [push, pull_request]
 
 env:
-  OCCLUM_VERSION: $(git describe --abbrev=0)
+  OCCLUM_VERSION2: $(cd $GITHUB_WORKSPACE && git describe --abbrev=0)
 
 jobs:
   make-test-on-ubuntu:
@@ -47,6 +47,12 @@ jobs:
     - uses: actions/checkout@v1
       with:
         submodules: true
+
+    - name: Get release version
+      id: get_version
+      run: |
+        echo ::set-env name=OCCLUM_VERSION::$(cd $GITHUB_WORKSPACE && git describe --abbrev=0)
+        echo "Occlum reversion 2 = " ${{ env.OCCLUM_VERSION2 }}
 
     - name: Create container with ubuntu image
       run: docker run -itd --name=ubuntu-test -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
