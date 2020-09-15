@@ -10,7 +10,7 @@ jobs:
   make-test-on-ubuntu:
     # The type of runner that the job will run on
     runs-on: ubuntu-18.04
-    container: occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
+    container: occlum/occlum:0.15.1-ubuntu18.04
 
     # Below steps are running directly in docker container
     steps:
@@ -39,3 +39,32 @@ jobs:
     - name: Integration Test
       run: |
         SGX_MODE=SIM make test
+      
+  make-test-on-ubuntu2:
+    runs-on: ubuntu-18.04
+
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        submodules: true
+
+    - name: Create container with ubuntu image
+      run: docker run -itd --name=ubuntu-test -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
+    
+    - name: Check Format
+      run:  docker exec centos-test bash -c "info=$(make format-check);
+        if [ -n \"$info\" ]; then
+          echo 'Format error detected.';
+          exit 1;
+        fi"
+
+    - name: Build Dependencies
+      run:  docker exec centos-test bash -c "cd /root/occlum; make submodule"
+
+    - name: Build Source
+      run:  docker exec centos-test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=y SGX_MODE=SIM make"
+
+    - name: Integration Test
+      run:  docker exec centos-test bash -c "cd /root/occlum; SGX_MODE=SIM make test"
+
+
