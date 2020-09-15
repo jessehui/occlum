@@ -58,19 +58,19 @@ jobs:
       run: docker run -itd --name=ubuntu-test -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
     
     - name: Check Format
-      run:  docker exec centos-test bash -c "info=$(make format-check);
+      run:  docker exec ubuntu-test bash -c "cd /root/occlum; info=$(make format-check);
         if [ -n \"$info\" ]; then
           echo 'Format error detected.';
           exit 1;
         fi"
 
     - name: Build Dependencies
-      run:  docker exec centos-test bash -c "cd /root/occlum; make submodule"
+      run:  docker exec ubuntu-test bash -c "cd /root/occlum; make submodule"
 
     - name: Build Source
-      run:  docker exec centos-test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=y SGX_MODE=SIM make"
+      run:  docker exec ubuntu-test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=y SGX_MODE=SIM make"
 
     - name: Integration Test
-      run:  docker exec centos-test bash -c "cd /root/occlum; SGX_MODE=SIM make test"
+      run:  docker exec ubuntu-test bash -c "cd /root/occlum; SGX_MODE=SIM make test"
 
 
