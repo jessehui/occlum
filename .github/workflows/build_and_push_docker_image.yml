@@ -15,9 +15,13 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install yum
-
       - name: Checkout code
         uses: actions/checkout@v2
+
+      - name: Copy context for docker build
+        run: |
+          cp -r tools/toolchains .
+          cp -r tools/docker .
 
       - name: Get release version
         id: get_version
@@ -51,6 +55,13 @@ jobs:
       steps:
       - name: Checkout code
         uses: actions/checkout@v2
+
+      # Because "Build and push" step `context` field can't be subdir,
+      # we need to copy files needed by dockerfile to root dir of the project
+      - name: Copy context for docker build
+        run: |
+          cp -r tools/toolchains .
+          cp -r tools/docker .
 
       - name: Get release version
         id: get_version
