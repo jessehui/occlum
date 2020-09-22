@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       demo_name:
-        description: 'demo name'
+        description: 'rebuild demo'
         required: true
         default: 'grpc'
       tag:
