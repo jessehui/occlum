@@ -224,7 +224,7 @@ jobs:
       run: echo ::set-env name=OCCLUM_VERSION::$(grep "Version =" src/pal/include/occlum_version.h |  awk '{print $4}')
 
     - name: Create container
-      run: docker run -itd --name=grpc_test -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
+      run: docker run -itd --name=grpc_test -v $GITHUB_WORKSPACE:/root/occlum occlumbackup/occlum:latest-ubuntu18.04-grpc
 
     - name: Build dependencies
       run: docker exec grpc_test bash -c "cd /root/occlum; make submodule"
@@ -232,11 +232,11 @@ jobs:
     - name: Make install
       run: docker exec grpc_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=y make install"
 
-    - name: Install openssl
-      run: docker exec grpc_test bash -c "cd /root/occlum/demos/grpc && ./download_and_install_openssl.sh"
+    # - name: Install openssl
+    #   run: docker exec grpc_test bash -c "cd /root/occlum/demos/grpc && ./download_and_install_openssl.sh"
 
-    - name: Build grpc dependencies
-      run: docker exec grpc_test bash -c "cd /root/occlum/demos/grpc && ./download_and_install_grpc.sh"
+    # - name: Build grpc dependencies
+    #   run: docker exec grpc_test bash -c "cd /root/occlum/demos/grpc && ./download_and_install_grpc.sh"
 
     - name: Prepare grpc sample project
       run: docker exec grpc_test bash -c "cd /root/occlum/demos/grpc && ./prepare_client_server.sh"
