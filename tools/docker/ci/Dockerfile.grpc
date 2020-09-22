@@ -1,0 +1,18 @@
+FROM occlum/occlum:0.16.0-ubuntu18.04 as base
+LABEL maintainer="Chunyang Hui <sanqian.hcy@antgroup.com>"
+
+WORKDIR /root
+RUN git clone https://github.com/occlum/occlum.git && \
+    cd occlum && \
+    source /root/.bashrc && \
+    make submodule && \
+    OCCLUM_RELEASE_BUILD=1 make && \
+    make install && \
+    cp -r demos /root/demos && \
+    rm -rf /root/occlum
+
+WORKDIR /root/demos/grpc
+RUN bash -x download_and_install_openssl.sh && \
+    bash -x download_and_install_grpc.sh && \
+
+WORKDIR /root
