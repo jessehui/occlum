@@ -297,55 +297,6 @@ jobs:
       run: docker exec xgboost_test bash -c "cd /root/occlum/demos/xgboost && SGX_MODE=SIM make test-local-cluster" || true
 
 
-# Below tests needs test image to run faster
-  Grpc_test:
-    runs-on: ubuntu-18.04
-    steps:
-    - uses: actions/checkout@v1
-      with:
-        submodules: true
-
-    - name: Create container
-      run: docker run -itd --name=grpc_test -v $GITHUB_WORKSPACE:/root/occlum occlumbackup/occlum:latest-ubuntu18.04-grpc
-
-    - name: Build dependencies
-      run: docker exec grpc_test bash -c "cd /root/occlum; make submodule"
-
-    - name: Make install
-      run: docker exec grpc_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=y make install"
-
-    - name: Prepare grpc sample project
-      run: docker exec grpc_test bash -c "cd /root/occlum/demos/grpc && ./prepare_client_server.sh"
-
-    - name: Run grpc server
-      run: docker exec grpc_test bash -c "cd /root/occlum/demos/grpc && SGX_MODE=SIM ./run_server_on_occlum.sh" &
-
-    - name: Run grpc client
-      run: |
-        sleep ${{ env.nap_time }};
-        docker exec grpc_test bash -c "cd /root/occlum/demos/grpc && SGX_MODE=SIM ./run_client_on_occlum.sh"
-
-
-  Openvino_test:
-    runs-on: ubuntu-18.04
-    steps:
-    - uses: actions/checkout@v1
-      with:
-        submodules: true
-
-    - name: Create container
-      run: docker run -itd --name=openvino_test -v $GITHUB_WORKSPACE:/root/occlum occlumbackup/occlum:latest-ubuntu18.04-openvino
-
-    - name: Build dependencies
-      run: docker exec openvino_test bash -c "cd /root/occlum; make submodule"
-
-    - name: Make install
-      run: docker exec openvino_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=y make install"
-
-    - name: Run openVINO benchmark
-      run: docker exec openvino_test bash -c "cd /root/occlum/demos/openvino && SGX_MODE=SIM ./run_benchmark_on_occlum.sh"
-
-
   Tensorflow_lite_test:
     runs-on: ubuntu-18.04
     steps:
@@ -373,3 +324,52 @@ jobs:
 
     - name: Run Tensorflow-lite benchmark
       run: docker exec tflite_test bash -c "cd /root/occlum/demos/tensorflow_lite && SGX_MODE=SIM ./run_tflite_in_occlum.sh benchmark"
+
+
+# Below tests needs test image to run faster
+  Grpc_test:
+    runs-on: ubuntu-18.04
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        submodules: true
+
+    - name: Create container
+      run: docker run -itd --name=grpc_test -v $GITHUB_WORKSPACE:/root/occlum occlumbackup/occlum:latest-ubuntu18.04-grpc
+
+    - name: Build dependencies
+      run: docker exec grpc_test bash -c "cd /root/occlum; make submodule"
+
+    - name: Make install
+      run: docker exec grpc_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=y make install"
+
+    - name: Prepare grpc sample project
+      run: docker exec grpc_test bash -c "cd /root/demos/grpc && ./prepare_client_server.sh"
+
+    - name: Run grpc server
+      run: docker exec grpc_test bash -c "cd /root/demos/grpc && SGX_MODE=SIM ./run_server_on_occlum.sh" &
+
+    - name: Run grpc client
+      run: |
+        sleep ${{ env.nap_time }};
+        docker exec grpc_test bash -c "cd /root/demos/grpc && SGX_MODE=SIM ./run_client_on_occlum.sh"
+
+
+  Openvino_test:
+    runs-on: ubuntu-18.04
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        submodules: true
+
+    - name: Create container
+      run: docker run -itd --name=openvino_test -v $GITHUB_WORKSPACE:/root/occlum occlumbackup/occlum:latest-ubuntu18.04-openvino
+
+    - name: Build dependencies
+      run: docker exec openvino_test bash -c "cd /root/occlum; make submodule"
+
+    - name: Make install
+      run: docker exec openvino_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=y make install"
+
+    - name: Run openVINO benchmark
+      run: docker exec openvino_test bash -c "cd /root/demos/openvino && SGX_MODE=SIM ./run_benchmark_on_occlum.sh"
