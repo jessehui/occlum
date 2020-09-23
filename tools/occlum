@@ -391,11 +391,15 @@ cmd_stop() {
 cmd_package() {
     check_has_built
 
+    pal_lib=libocclum-pal.so
+    libos_lib=libocclum-libos.so
+
     SGX_MODE=$(cat $instance_dir/.sgx_mode)
     if [[ -n $SGX_MODE && "$SGX_MODE" != "HW" ]]; then
-        echo '"occlum package" command should only be used for an Occlum instance of SGX hardware mode, not the simulation mode.'
+        echo "Warning: Current instance is in SGX Simulation Mode and shouldn't be used in depolyment."
         echo 'Please run "occlum build --sgx-mode HW" and then use "occlum package"'
-        exit 1
+        pal_lib=libocclum-pal_sim.so
+        libos_lib=libocclum-libos_sim.so
     fi
 
     instance_base_name=$(basename $instance_dir)
@@ -412,7 +416,7 @@ cmd_package() {
     rm -f $package_name
 
     cd .. && tar -cvzf $instance_dir/$package_name $instance_base_name/Occlum.json $instance_base_name/build/bin \
-        $instance_base_name/build/lib/libocclum-libos.signed.so $instance_base_name/build/lib/libocclum-pal.so* \
+        $instance_base_name/build/lib/libocclum-libos.signed.so "$instance_base_name/build/lib/$pal_lib*" \
         $instance_base_name/build/mount $instance_base_name/build/Occlum.json.protected \
         $instance_base_name/build/initfs $instance_base_name/build/.Occlum_sys.json.protected \
         $instance_base_name/initfs $instance_base_name/run \

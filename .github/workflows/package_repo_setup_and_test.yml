@@ -152,6 +152,21 @@ jobs:
       run: docker exec ubuntu bash -c "cat /opt/occlum/include/occlum_version.h | grep -n5 ${{ env.OCCLUM_VERSION }}"
 
 
+  Test_deb_deploy:
+    if: ${{ always() }}
+    needs: Test_deb_package
+    runs-on: ubuntu-18.04
+
+    steps:
+    - name: Checkout occlum src code
+      uses: actions/checkout@v2
+
+    - name: Test deployment
+      run: |
+        cd demos/deploy
+        SGX_MODE=SIM ./deploy_image_test.sh ubuntu18.04
+
+
   Test_rpm_package:
     if: ${{ always() }}
     needs: Package_repository_setup_and_test
@@ -194,3 +209,18 @@ jobs:
     # If there is no match, it will return 1.
     - name: Check installed version
       run: docker exec centos bash -c "cat /opt/occlum/include/occlum_version.h | grep -n5 ${{ env.OCCLUM_VERSION }}"
+
+
+  Test_rpm_deploy:
+    if: ${{ always() }}
+    needs: Test_rpm_package
+    runs-on: ubuntu-18.04
+
+    steps:
+    - name: Checkout occlum src code
+      uses: actions/checkout@v2
+
+    - name: Test deployment
+      run: |
+        cd demos/deploy
+        SGX_MODE=SIM ./deploy_image_test.sh centos8.2
