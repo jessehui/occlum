@@ -4,6 +4,12 @@ this_dir="$( cd "$( dirname "${BASH_SOURCE[0]}"  )" >/dev/null 2>&1 && pwd )"
 occlum_dir="$( cd "$( dirname "$this_dir/../../../"  )" >/dev/null 2>&1 && pwd )"
 build_makefile=$occlum_dir/build/bin/occlum_build.mk
 
+CYAN="\033[1;36m"
+GREEN="\033[1;32m"
+RED="\033[1;31m"
+NO_COLOR="\033[0m"
+ECHO="/bin/echo -e"
+
 if [[ "$occlum_dir" == "/opt/occlum" ]]; then
     version_header=$occlum_dir/include/occlum_version.h
     occlum_sgx_env=$occlum_dir/sgxsdk-tools/environment
@@ -23,6 +29,7 @@ fi
 instance_dir=`pwd`
 
 status_file=$instance_dir/.__occlum_status
+examine_status_file=$instance_dir/.__examine_status
 
 # For deployment environment, env for sgx-sdk may not exist
 if [ -f "$occlum_sgx_env" ]; then
@@ -93,6 +100,41 @@ check_has_built() {
     if [ ! -d "$instance_dir/run/mount/__ROOT"  ]; then
         echo "Error: the Occlum image and enclave are not built yet. Need to run \"occlum build\" first."
         exit 1
+    fi
+}
+
+check_fsgsbase_support() {
+    # Skip this check for SGX simulation mode
+    if [ "$(cat $instance_dir/.sgx_mode 2>/dev/null)" == "SIM" ]; then
+            return
+    fi
+
+    if [ -f "$examine_status_file" ];then
+        ret=$(grep "No" $examine_status_file || true)
+        if [ -n "$ret" ]; then
+            cat $examine_status_file
+            exit 1
+        fi
+    else
+        # Check fsgsbase hardware support
+        info=$(cat /proc/cpuinfo | grep fsgsbase)
+        if [ -n "$info" ]; then
+            $ECHO "FSGSBASE instructions hardware support: ["$GREEN"Yes"$NO_COLOR"]" | tee -a $examine_status_file
+        else
+            $ECHO "FSGSBASE instructions hardware support: ["$RED"No"$NO_COLOR"]" | tee -a $examine_status_file
+        fi
+
+        # Check fsgsbase kernel support
+        set +e
+        output="$($occlum_dir/build/bin/detect_fsgsbase)"
+        ret=$?
+        set -e
+        if [ $ret == 0 ]; then
+            $ECHO "FSGSBASE instructions kerenel support: ["$GREEN"Yes"$NO_COLOR"]" | tee -a $examine_status_file
+        else
+            $ECHO "FSGSBASE instructions kerenel support: ["$RED"No"$NO_COLOR"]" | tee -a $examine_status_file
+            $ECHO "Details:\n\t$output" | tee -a $examine_status_file
+        fi
     fi
 }
 
@@ -224,6 +266,8 @@ cmd_run() {
         export LD_LIBRARY_PATH="$instance_dir/build/lib"
     fi
 
+    check_fsgsbase_support
+
     echo "running" > $status_file
 
     if [ "`get_enclave_debuggable_flag`" == "False" ]; then
@@ -243,6 +287,8 @@ cmd_start() {
     else
         export LD_LIBRARY_PATH="$instance_dir/build/lib"
     fi
+
+    check_fsgsbase_support
 
     echo "running" > $status_file
 
