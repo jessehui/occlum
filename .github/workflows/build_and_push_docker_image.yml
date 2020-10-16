@@ -47,8 +47,9 @@ jobs:
           context: .
           file: ./tools/docker/Dockerfile.centos8.1
           platforms: linux/amd64
+          build-args: ENV_CI=yes
           push: true
-          tags: occlum/occlum:${{ env.RELEASE_VERSION }}-centos8.1
+          tags: occlumbackup/occlum:${{ env.RELEASE_VERSION }}-centos8.1
 
 
   generate-ubuntu-image:
@@ -87,5 +88,6 @@ jobs:
           context: .
           file: ./tools/docker/Dockerfile.ubuntu18.04
           platforms: linux/amd64
+          build-args: ENV_CI=yes
           push: true
-          tags: occlum/occlum:${{ env.RELEASE_VERSION }}-ubuntu18.04
+          tags: occlumbackup/occlum:${{ env.RELEASE_VERSION }}-ubuntu18.04

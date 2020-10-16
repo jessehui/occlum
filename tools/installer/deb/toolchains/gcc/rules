@@ -41,7 +41,7 @@ prepare_musl:
 
 override_dh_auto_build: prepare_musl
 	cd $(tmp_build_dir)/musl-cross-make; \
-		make -j$(nproc)
+		make
 
 # We create symlinks in /usr/local
 override_dh_usrlocal:

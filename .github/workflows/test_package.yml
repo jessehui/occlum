@@ -1,0 +1,112 @@
+name: TEST (Manual Trigger)
+
+# This is a manual trigger.
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       occlum_version:
+#         description: 'package version get from occlum image'
+#         required: true
+#         default: '1.0.1'
+
+on: [push, pull_request]
+
+jobs:
+  Package_repository_setup_and_test:
+    runs-on: ubuntu-18.04
+    env:
+     TOKEN: ${{ secrets.PAT_TEST }}
+
+    steps:
+    - name: Checkout src code
+      uses: actions/checkout@v2
+      with:
+        path: occlum
+
+    - name: Checkout target repo
+      uses: actions/checkout@v2
+      with:
+        repository: jessehui/occlum-package-repos
+        ref: master
+        path: occlum-package-repos
+        persist-credentials: false # otherwise, the token used is the GITHUB_TOKEN, instead of your personal token
+        fetch-depth: 0 # otherwise, you will failed to push refs to dest repo
+
+    - name: Create centos container
+      run: docker run -itd --name=centos -v $GITHUB_WORKSPACE:/root/workspace occlumbackup/occlum:1.16.1-centos8.1
+
+    - name: Check rpm installers
+      run: docker exec centos bash -c "cd /root/rpm-packages; ls -al"
+
+    - name: Configure the container
+      run: docker exec centos bash -c 'yum install -y gnupg pinentry createrepo rpm-sign ca-certificates; rm -rf /root/.gnupg;
+            echo "${{ secrets.RPM_PRIVATE_KEY }}" > /root/rpm_private_key; gpg --allow-secret-key-import --import /root/rpm_private_key;
+            echo "${{ secrets.CA_PRIVATE_KEY }}" > /root/ca_private_key; gpg --allow-secret-key-import --import /root/ca_private_key;
+            gpg --list-keys;
+            echo -e "%__gpg /usr/bin/gpg\n%_source_filedigest_algorithm 8\n%_binary_filedigest_algorithm 8\n%_gpg_digest_algo SHA256\n%_gpg_path  /root/.gnupg\n%_gpg_name rpm_gpg_key" > /root/.rpmmacros'
+
+    - name: Check key
+      uses: actions/upload-artifact@v2
+      with:
+        name: my-artifact
+        path: ~/occlum/rpm_private_key
+
+    - name: Sign the package and update the repo
+      run: docker exec centos bash -c "cp /root/rpm-packages/* /root/workspace/occlum-package-repos/rpm-repo; cd /root/workspace/occlum-package-repos/rpm-repo; rm -rf repodata RPM-GPG-KEY-*;
+            rpmsign --resign *.rpm; createrepo --update -d -p -o . .; gpg -u rpm_gpg_key --detach-sign -a repodata/repomd.xml; gpg --export -a "rpm_gpg_key" > RPM-GPG-KEY-rpm-sign;
+            gpg --export -a "ca_gpg_key" > RPM-GPG-KEY-rpm-sign-ca; gpg --detach-sign -a -u ca_gpg_key RPM-GPG-KEY-rpm-sign"
+
+    # - name: Create ubuntu container
+    #   run: docker run -itd --name=ubuntu -v $GITHUB_WORKSPACE:/root/occlum -v /tmp:/tmp occlumbackup/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
+
+    # - name: Configure the container
+    #   run: docker exec ubuntu bash -c "apt-get install gnupg rng-tools reprepro; rm -rf $HOME/.gnupg; cat >/root/.rpm_keydetails <<EOF
+
+    - name: Commit files
+      run: |
+        cd occlum-package-repos; rm -rf rpm-repo/occlum-toolchains-golang*
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add -A
+        git commit -m "Add packages for new release"
+
+    - name: Push changes
+      uses: ad-m/github-push-action@master
+      with:
+        github_token: ${{ secrets.PAT_TEST }}
+        branch: pre-release2
+        directory: occlum-package-repos
+        repository: jessehui/occlum-package-repos
+        force: true
+
+
+
+  Test_rpm_package:
+    needs: Package_repository_setup_and_test
+    runs-on: ubuntu-18.04
+    steps:
+    - name: Create clean centos container
+      run: docker run -itd --name=centos centos:centos8.1.1911
+
+    - name: Install sgx dependencies
+      run: docker exec centos bash -c "yum install -y wget yum-utils make jq; cd /root && wget https://download.01.org/intel-sgx/sgx-linux/2.11/distro/centos8.1-server/sgx_rpm_local_repo.tgz;
+        tar -xvzf sgx_rpm_local_repo.tgz; yum-config-manager --add-repo file:///root/sgx_rpm_local_repo; yum --nogpgcheck install -y libsgx-epid libsgx-urts;
+        yum --nogpgcheck install -y libsgx-quote-ex; rpm -i /root/sgx_rpm_local_repo/libsgx-uae-service-2.11.100.2-1.el8.x86_64.rpm || true"
+
+    - name: Install occlum
+      run: |
+        docker exec centos bash -c "cat << EOF > /etc/yum.repos.d/occlum.repo
+        [occlum]
+        name=occlum
+        enabled=1
+        baseurl=https://jessehui.github.io/occlum-package-repos/rpm-repo/
+        gpgcheck=1
+        repo_gpgcheck=1
+        gpgkey=https://jessehui.github.io/occlum-package-repos/rpm-repo/RPM-GPG-KEY-rpm-sign
+        gpgcakey=https://jessehui.github.io/occlum-package-repos/rpm-repo/RPM-GPG-KEY-rpm-sign-ca
+        EOF"
+        docker exec centos bash -c "yum install -y occlum"
+
+    - name: Hello world test
+      run: docker exec centos bash -c "source /etc/profile; cd /root; rm -rf hello_world*; wget https://raw.githubusercontent.com/occlum/occlum/master/demos/hello_c/hello_world.c; occlum-gcc -o hello_world hello_world.c;
+            occlum new occlum-instance; cp hello_world /root/occlum-instance/image/bin; cd /root/occlum-instance && SGX_MODE=SIM occlum build; occlum run /bin/hello_world"

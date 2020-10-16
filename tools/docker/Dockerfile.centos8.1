@@ -96,14 +96,18 @@ ENV PATH="/opt/occlum/toolchains/jvm/bin:$PATH"
 
 # Install the latest version of Occlum
 WORKDIR /root
-RUN git clone https://github.com/occlum/occlum.git && \
+RUN git clone https://github.com/jessehui/occlum.git && \
     cd occlum && \
+    git checkout test_auto_deploy && \
     source /root/.bashrc && \
     make submodule && \
     OCCLUM_RELEASE_BUILD=1 make && \
     make install && \
     cp -r demos /root/demos && \
-    rm -rf /root/occlum
+    cd /root/occlum/tools/installer/rpm && make && \
+    make c/c++ && make golang && \
+    cp -r /root/occlum/build/rpms/ /root/rpm-packages && \
+    rm -rf /root/occlum /root/rpmbuild*
 
 # Start AESM service automatically
 #
