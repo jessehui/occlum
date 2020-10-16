@@ -1,0 +1,21 @@
+name: Set up Package Repository and Test (Manual Trigger)
+
+# This is a manual trigger.
+on:
+  workflow_dispatch:
+    inputs:
+      occlum_version:
+        description: 'package version get from occlum image'
+        required: true
+        default: '1.0.1'
+
+jobs:
+  RPM_package_repository_setup_and_test:
+    runs-on: ubuntu-18.04
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Create container
+      run: docker run -itd --name=centos -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-centos8.1
+
