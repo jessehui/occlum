@@ -9,6 +9,11 @@ export install_dir = $(buildroot)/opt/occlum/toolchains/gcc
 
 SHELL = /bin/bash
 
+# For CI environment, too many jobs can cause out of memory.
+# ifneq ($(ENV_CI),yes)
+# 	BUILD_OPTIONS = -j$(nproc)
+# endif
+
 # Needed by musl-cross-make config
 TARGET = x86_64-linux-musl
 MUSL_REPO = https://github.com/occlum/musl
@@ -41,7 +46,7 @@ prepare_musl:
 
 override_dh_auto_build: prepare_musl
 	cd $(tmp_build_dir)/musl-cross-make; \
-		make -j$(nproc)
+		make
 
 # We create symlinks in /usr/local
 override_dh_usrlocal:

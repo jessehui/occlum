@@ -9,6 +9,10 @@ FROM ubuntu:18.04
 
 LABEL maintainer="Qing Li <geding.lq@antgroup.com>"
 
+# For CI environment, ENV_CI should be defined to "yes" when docker build.
+ARG ENV_CI
+ENV ENV_CI=$ENV_CI
+
 RUN apt-get update && DEBIAN_FRONTEND="noninteractive" apt-get install -y --no-install-recommends \
         alien \
         astyle \
@@ -110,12 +114,12 @@ ENV PATH="/opt/occlum/toolchains/jvm/bin:$PATH"
 WORKDIR /root
 RUN git clone https://github.com/jessehui/occlum.git && \
     cd occlum && \
-    git checkout add_installer_build && \
+    git checkout test_auto_deploy && \
     make submodule && \
     OCCLUM_RELEASE_BUILD=1 make && \
     make install && \
     cp -r demos /root/demos && \
-    cd tools/installer/deb && make && \
+    cd /root/occlum/tools/installer/deb && make && \
     make c/c++ && make golang && \
     cp -r /root/occlum/build/debs/ /root/deb-packages && \
     rm -rf /root/occlum /tmp/*

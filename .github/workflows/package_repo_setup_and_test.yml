@@ -1,21 +1,84 @@
 name: Set up Package Repository and Test (Manual Trigger)
 
 # This is a manual trigger.
-on:
-  workflow_dispatch:
-    inputs:
-      occlum_version:
-        description: 'package version get from occlum image'
-        required: true
-        default: '1.0.1'
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       occlum_version:
+#         description: 'package version get from occlum image'
+#         required: true
+#         default: '1.0.1'
+
+on: [push, pull_request]
 
 jobs:
-  RPM_package_repository_setup_and_test:
+  Package_repository_setup_and_test:
     runs-on: ubuntu-18.04
+    env:
+     TOKEN: ${{ secrets.PAT_TEST }}
     steps:
-    - name: Checkout code
+    - name: Checkout src code
       uses: actions/checkout@v2
+      with:
+        path: occlum
 
-    - name: Create container
-      run: docker run -itd --name=centos -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-centos8.1
+    - name: Checkout target repo
+      uses: actions/checkout@v2
+      with:
+        repository: jessehui/occlum-installers
+        ref: master
+        path: occlum-installers
+        persist-credentials: false # otherwise, the token used is the GITHUB_TOKEN, instead of your personal token
+        fetch-depth: 0 # otherwise, you will failed to push refs to dest repo
 
+    - name: Create centos container
+      run: docker run -itd --name=centos -v $GITHUB_WORKSPACE:/root/workspace occlumbackup/occlum:1.16.1-centos8.1
+
+    - name: Check rpm installers
+      run: docker exec centos bash -c "cd /root/rpm-packages; ls -al"
+
+    - name: Configure the container
+      run: docker exec centos bash -c "yum install -y gnupg pinentry createrepo rpm-sign; rm -rf $HOME/.gnupg; echo -e 'Key-Type:RSA\n
+              Key-Length:2048\n
+              Subkey-Type:RSA\n
+              Subkey-Length:2048\n
+              Name-Real:rpm_gpg_key\n
+              Name-Comment:To sign for RPM packages and repodata\n
+              Name-Email:none\n
+              Expire-Date:0\n%no-protection\n' > /root/.rpm_keydetails; gpg2 --verbose --batch --gen-key /root/.rpm_keydetails;
+              echo -e 'Key-Type:RSA\n
+              Key-Length:2048\n
+              Subkey-Type:RSA\n
+              Subkey-Length:2048\n
+              Name-Real:ca_gpg_key\n
+              Name-Comment:To sign for rpm_gpg_key\n
+              Name-Email:none\n
+              Expire-Date:0\n%no-protection\n' > /root/.ca_keydetails; gpg2 --verbose --batch --gen-key /root/.ca_keydetails;
+              echo -e '%__gpg /usr/bin/gpg\n%_source_filedigest_algorithm 8\n%_binary_filedigest_algorithm 8\n%_gpg_digest_algo SHA256\n%_gpg_path  /root/.gnupg\n%_gpg_name rpm_gpg_key' > /root/.rpmmacros"
+
+    - name: Sign the package and update the repo
+      run: docker exec centos bash -c "cp /root/rpm-packages/* /root/workspace/occlum-installers/rpm-repo; cd /root/workspace/occlum-installers/rpm-repo; rm -rf repodata RPM-GPG-KEY-*;
+            rpmsign --resign *.rpm; createrepo --update -d -p -o . .; gpg -u rpm_gpg_key --detach-sign -a repodata/repomd.xml; gpg --export -a "rpm_gpg_key" > RPM-GPG-KEY-rpm-sign;
+            gpg --export -a "ca_gpg_key" > RPM-GPG-KEY-rpm-sign-ca; gpg --detach-sign -a -u ca_gpg_key RPM-GPG-KEY-rpm-sign"
+
+    # - name: Create ubuntu container
+    #   run: docker run -itd --name=ubuntu -v $GITHUB_WORKSPACE:/root/occlum -v /tmp:/tmp occlumbackup/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
+
+    # - name: Configure the container
+    #   run: docker exec ubuntu bash -c "apt-get install gnupg rng-tools reprepro; rm -rf $HOME/.gnupg; cat >/root/.rpm_keydetails <<EOF
+
+    - name: Commit files
+      run: |
+        cd occlum-installers
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git commit -am "Add packages for new release"
+
+    - name: Push changes
+      uses: ad-m/github-push-action@master
+      with:
+        github_token: ${{ secrets.PAT_TEST }}
+        branch: pre-release2
+        directory: occlum-installers
+        repository: jessehui/occlum-installers
+        force: true
