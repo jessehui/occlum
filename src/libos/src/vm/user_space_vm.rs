@@ -32,7 +32,7 @@ impl UserSpaceVMManager {
         };
 
         *self.free_size.lock().unwrap() -= size;
-        Ok(UserSpaceVMRange::new(vm_range))
+        return Ok(UserSpaceVMRange::new(vm_range));
     }
 
     fn add_free_size(&self, user_space_vmrange: &UserSpaceVMRange) {

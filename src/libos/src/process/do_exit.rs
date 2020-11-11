@@ -6,6 +6,9 @@ use super::process::{Process, ProcessFilter};
 use super::{table, TermStatus, ThreadRef, ThreadStatus};
 use crate::prelude::*;
 use crate::signal::{KernelSignal, SigNum};
+use crate::entry::{RUNNING, native};
+use crate::libc::pthread_join;
+use core::ptr;
 
 pub fn do_exit_group(status: i32) {
     let term_status = TermStatus::Exited(status as u8);
@@ -54,6 +57,10 @@ fn exit_thread(term_status: TermStatus) {
 
     // If this thread is the last thread, then exit the process
     if num_remaining_threads == 0 {
+        unsafe{
+            RUNNING = false;
+            pthread_join(native, ptr::null_mut());
+        }
         exit_process(&thread, term_status);
     }
 }

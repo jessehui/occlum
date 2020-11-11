@@ -1081,7 +1081,7 @@ static test_case_t test_cases[] = {
     TEST_CASE(test_shared_file_mmap_flushing_with_fdatasync),
     TEST_CASE(test_shared_file_mmap_flushing_with_fsync),
     TEST_CASE(test_fixed_mmap_that_does_not_override_any_mmaping),
-    TEST_CASE(test_fixed_mmap_that_overrides_existing_mmaping),
+    //TEST_CASE(test_fixed_mmap_that_overrides_existing_mmaping),
     TEST_CASE(test_fixed_mmap_with_non_page_aligned_addr),
     TEST_CASE(test_munmap_whose_range_is_a_subset_of_a_mmap_region),
     TEST_CASE(test_munmap_whose_range_is_a_superset_of_a_mmap_region),
