@@ -42,6 +42,7 @@ dcap = []               # DCAP support. The compilation relies on DCAP package.
 cov = ["sgx_cov"]       # Enable coverage colletcion.
 
 [target.'cfg(not(target_env = "sgx"))'.dependencies]
+crossbeam-queue = { version = "0.3.0", default-features = false, features = ["alloc"] }
 sgx_types = { path = "../../deps/rust-sgx-sdk/sgx_types" }
 sgx_tstd = { path = "../../deps/rust-sgx-sdk/sgx_tstd", features = ["backtrace"] }
 sgx_trts = { path = "../../deps/rust-sgx-sdk/sgx_trts" }
@@ -49,3 +50,5 @@ sgx_tse = { path = "../../deps/rust-sgx-sdk/sgx_tse" }
 sgx_tcrypto = { path = "../../deps/rust-sgx-sdk/sgx_tcrypto" }
 sgx_cov = { path = "../../deps/rust-sgx-sdk/sgx_cov", optional = true }
 goblin = { version = "0.3.4", default-features = false, features = ["elf64", "elf32", "endian_fd"] }
+flume = { path = "../../deps/flume", default-features = false, features = ["async"] }
+intrusive-collections = "0.9"

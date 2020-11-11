@@ -683,7 +683,7 @@ async fn do_mmap(
 }
 
 async fn do_munmap(addr: usize, size: usize) -> Result<isize> {
-    vm::do_munmap(addr, size)?;
+    vm::do_munmap(addr, size).await?;
     Ok(0)
 }
 
@@ -695,7 +695,7 @@ async fn do_mremap(
     new_addr: usize,
 ) -> Result<isize> {
     let flags = MRemapFlags::from_raw(flags as u32, new_addr)?;
-    let addr = vm::do_mremap(old_addr, old_size, new_size, flags)?;
+    let addr = vm::do_mremap(old_addr, old_size, new_size, flags).await?;
     Ok(addr as isize)
 }
 

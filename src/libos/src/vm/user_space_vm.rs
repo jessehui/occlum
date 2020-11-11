@@ -3,48 +3,65 @@ use config::LIBOS_CONFIG;
 
 /// The virtual memory manager for the entire user space
 pub struct UserSpaceVMManager {
-    range: VMRange,
-    vm_manager: SgxMutex<VMManager>,
+    vm_manager: VMManager,
     total_size: usize,
     free_size: SgxMutex<usize>,
 }
 
 impl UserSpaceVMManager {
-    fn new() -> UserSpaceVMManager {
+    fn new() -> Result<UserSpaceVMManager> {
         let rsrv_mem_size = LIBOS_CONFIG.resource_limits.user_space_size;
-        UserSpaceVMManager {
-            range: VMRange::default(),
-            vm_manager: SgxMutex::new(VMManager::default()),
-            total_size: rsrv_mem_size,
-            free_size: SgxMutex::new(rsrv_mem_size),
-        }
-    }
-
-    pub fn init(&mut self) -> Result<()> {
-        let total_size = self.total_size;
         let vm_range = unsafe {
-            let ptr = sgx_alloc_rsrv_mem(total_size);
+            let ptr = sgx_alloc_rsrv_mem(rsrv_mem_size);
             let perm = MemPerm::READ | MemPerm::WRITE;
             if ptr.is_null() {
                 return_errno!(ENOMEM, "run out of reserved memory");
             }
             // Change the page permission to RW (default)
             assert!(
-                sgx_tprotect_rsrv_mem(ptr, total_size, perm.bits()) == sgx_status_t::SGX_SUCCESS
+                sgx_tprotect_rsrv_mem(ptr, rsrv_mem_size, perm.bits()) == sgx_status_t::SGX_SUCCESS
             );
 
             let addr = ptr as usize;
             debug!(
                 "allocated rsrv addr is 0x{:x}, len is 0x{:x}",
-                addr, total_size
+                addr, rsrv_mem_size
             );
-            VMRange::from_unchecked(addr, addr + total_size)
+            VMRange::from_unchecked(addr, addr + rsrv_mem_size)
         };
-        self.range = vm_range;
-        let mut vm_manager = VMManager::from(vm_range.start(), vm_range.size())?;
-        *self.vm_manager.lock().unwrap() = vm_manager;
-        Ok(())
+        let vm_manager = VMManager::from(vm_range.start(), vm_range.size())?;
+        Ok(UserSpaceVMManager {
+            vm_manager,
+            total_size: rsrv_mem_size,
+            free_size: SgxMutex::new(rsrv_mem_size),
+        })
     }
+
+    // pub fn init(&mut self) -> Result<()> {
+    //     let total_size = self.total_size;
+    //     let vm_range = unsafe {
+    //         let ptr = sgx_alloc_rsrv_mem(total_size);
+    //         let perm = MemPerm::READ | MemPerm::WRITE;
+    //         if ptr.is_null() {
+    //             return_errno!(ENOMEM, "run out of reserved memory");
+    //         }
+    //         // Change the page permission to RW (default)
+    //         assert!(
+    //             sgx_tprotect_rsrv_mem(ptr, total_size, perm.bits()) == sgx_status_t::SGX_SUCCESS
+    //         );
+
+    //         let addr = ptr as usize;
+    //         debug!(
+    //             "allocated rsrv addr is 0x{:x}, len is 0x{:x}",
+    //             addr, total_size
+    //         );
+    //         VMRange::from_unchecked(addr, addr + total_size)
+    //     };
+    //     self.range = vm_range;
+    //     let mut vm_manager = VMManager::from(vm_range.start(), vm_range.size())?;
+    //     self.vm_manager = vm_manager;
+    //     Ok(())
+    // }
 
     pub fn alloc(&self, size: usize) -> Result<UserSpaceVMRange> {
         let vm_range = unsafe {
@@ -62,7 +79,19 @@ impl UserSpaceVMManager {
         };
 
         *self.free_size.lock().unwrap() -= size;
-        Ok(UserSpaceVMRange::new(vm_range))
+        return Ok(UserSpaceVMRange::new(vm_range));
+    }
+
+    pub fn init_mmap(ptr: usize, size: usize) -> Result<()> {
+        let perm = MemPerm::READ | MemPerm::WRITE;
+        // Change the page permission to RW
+        unsafe {
+            assert!(
+                sgx_tprotect_rsrv_mem(ptr as *const c_void, size, perm.bits())
+                    == sgx_status_t::SGX_SUCCESS
+            );
+        }
+        Ok(())
     }
 
     fn add_free_size(&self, user_space_vmrange: &UserSpaceVMRange) {
@@ -83,21 +112,17 @@ impl UserSpaceVMManager {
         *self.free_size.lock().unwrap()
     }
 
-    pub fn vm_manager(&self) -> &SgxMutex<VMManager> {
+    pub fn vm_manager(&self) -> &VMManager {
         &self.vm_manager
     }
 
     pub fn range(&self) -> &VMRange {
-        &self.range
+        &self.vm_manager.range()
     }
 }
 
 lazy_static! {
-    pub static ref USER_SPACE_VM_MANAGER: UserSpaceVMManager = {
-        let mut user_vm = UserSpaceVMManager::new();
-        user_vm.init().unwrap();
-        user_vm
-    };
+    pub static ref USER_SPACE_VM_MANAGER: UserSpaceVMManager = UserSpaceVMManager::new().unwrap();
 }
 
 bitflags! {

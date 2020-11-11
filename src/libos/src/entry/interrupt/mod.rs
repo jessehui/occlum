@@ -47,12 +47,7 @@ pub async fn handle_interrupt() -> Result<()> {
 pub fn enable_current_thread() {
     // Interruptible range
     let (addr, size) = {
-        let vm_range = USER_SPACE_VM_MANAGER
-            .vm_manager()
-            .lock()
-            .unwrap()
-            .range()
-            .clone();
+        let vm_range = USER_SPACE_VM_MANAGER.vm_manager().range();
         (vm_range.start(), vm_range.size())
     };
     unsafe {

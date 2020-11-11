@@ -117,7 +117,7 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
         // let mut vm_manager = VMManager::from(process_base, process_range.range().size())?;
         // Note: we do not need to fill zeros of the mmap region.
         // VMManager will fill zeros (if necessary) on mmap.
-        let mut vm_manager = USER_SPACE_VM_MANAGER.vm_manager().lock().unwrap();
+        let mut vm_manager = USER_SPACE_VM_MANAGER.vm_manager();
         let vm_range = vm_manager.range().clone();
 
         // Tracker to track the min_start for each part
@@ -290,27 +290,27 @@ impl Default for ProcessVM {
     }
 }
 
-impl Drop for ProcessVM {
-    fn drop(&mut self) {
-        self.elf_ranges.iter().for_each(|vm_range| {
-            USER_SPACE_VM_MANAGER
-                .vm_manager()
-                .lock()
-                .unwrap()
-                .munmap(vm_range.start(), vm_range.size());
-        });
-        USER_SPACE_VM_MANAGER
-            .vm_manager()
-            .lock()
-            .unwrap()
-            .munmap(self.heap_range.start(), self.heap_range.size());
-        USER_SPACE_VM_MANAGER
-            .vm_manager()
-            .lock()
-            .unwrap()
-            .munmap(self.stack_range.start(), self.stack_range.size());
-    }
-}
+// impl Drop for ProcessVM {
+//     fn drop(&mut self) {
+//         self.elf_ranges.iter().for_each(|vm_range| {
+//             USER_SPACE_VM_MANAGER
+//                 .vm_manager()
+//                 .lock()
+//                 .unwrap()
+//                 .munmap(vm_range.start(), vm_range.size());
+//         });
+//         USER_SPACE_VM_MANAGER
+//             .vm_manager()
+//             .lock()
+//             .unwrap()
+//             .munmap(self.heap_range.start(), self.heap_range.size());
+//         USER_SPACE_VM_MANAGER
+//             .vm_manager()
+//             .lock()
+//             .unwrap()
+//             .munmap(self.stack_range.start(), self.stack_range.size());
+//     }
+// }
 
 impl ProcessVM {
     // pub fn get_process_range(&self) -> &VMRange {
@@ -343,6 +343,24 @@ impl ProcessVM {
 
     pub fn get_brk(&self) -> usize {
         self.brk.load(Ordering::SeqCst)
+    }
+
+    // pub fn get_mmap_manager(&self) -> &VMManager {
+    //     &self.mmap_manager
+    // }
+
+    pub fn clean_when_exit(&self) {
+        for vm_range in &self.elf_ranges {
+            USER_SPACE_VM_MANAGER
+                .vm_manager()
+                .munmap(vm_range.start(), vm_range.size());
+        }
+        USER_SPACE_VM_MANAGER
+            .vm_manager()
+            .munmap(self.heap_range.start(), self.heap_range.size());
+        USER_SPACE_VM_MANAGER
+            .vm_manager()
+            .munmap(self.stack_range.start(), self.stack_range.size());
     }
 
     pub fn brk(&self, new_brk: usize) -> Result<usize> {
@@ -413,11 +431,7 @@ impl ProcessVM {
             .initializer(initializer)
             .writeback_file(writeback_file)
             .build()?;
-        let mmap_addr = USER_SPACE_VM_MANAGER
-            .vm_manager()
-            .lock()
-            .unwrap()
-            .mmap(mmap_options)?;
+        let mmap_addr = USER_SPACE_VM_MANAGER.vm_manager().mmap(mmap_options)?;
         Ok(mmap_addr)
     }
 
@@ -435,19 +449,11 @@ impl ProcessVM {
         }
 
         let mremap_option = VMRemapOptions::new(old_addr, old_size, new_size, flags)?;
-        USER_SPACE_VM_MANAGER
-            .vm_manager()
-            .lock()
-            .unwrap()
-            .mremap(&mremap_option)
+        USER_SPACE_VM_MANAGER.vm_manager().mremap(&mremap_option)
     }
 
     pub fn munmap(&self, addr: usize, size: usize) -> Result<()> {
-        USER_SPACE_VM_MANAGER
-            .vm_manager()
-            .lock()
-            .unwrap()
-            .munmap(addr, size)
+        USER_SPACE_VM_MANAGER.vm_manager().munmap(addr, size)
     }
 
     pub fn mprotect(&self, addr: usize, size: usize, perms: VMPerms) -> Result<()> {
@@ -455,7 +461,7 @@ impl ProcessVM {
         if !USER_SPACE_VM_MANAGER.range().is_superset_of(&protect_range) {
             return_errno!(ENOMEM, "invalid range");
         }
-        let mut mmap_manager = USER_SPACE_VM_MANAGER.vm_manager().lock().unwrap();
+        let mut mmap_manager = USER_SPACE_VM_MANAGER.vm_manager();
 
         // TODO: support mprotect vm regions in addition to mmap
         if !mmap_manager.range().is_superset_of(&protect_range) {
@@ -468,23 +474,18 @@ impl ProcessVM {
 
     pub fn msync(&self, addr: usize, size: usize) -> Result<()> {
         let sync_range = VMRange::new_with_size(addr, size)?;
-        let mut mmap_manager = USER_SPACE_VM_MANAGER.vm_manager().lock().unwrap();
-        mmap_manager.msync_by_range(&sync_range)
+        USER_SPACE_VM_MANAGER
+            .vm_manager()
+            .msync_by_range(&sync_range)
     }
 
     pub fn msync_by_file(&self, sync_file: &FileRef) {
-        let mut mmap_manager = USER_SPACE_VM_MANAGER.vm_manager().lock().unwrap();
-        mmap_manager.msync_by_file(sync_file);
+        USER_SPACE_VM_MANAGER.vm_manager().msync_by_file(sync_file);
     }
 
     // Return: a copy of the found region
     pub fn find_mmap_region(&self, addr: usize) -> Result<VMRange> {
-        USER_SPACE_VM_MANAGER
-            .vm_manager()
-            .lock()
-            .unwrap()
-            .find_mmap_region(addr)
-            .map(|range_ref| *range_ref)
+        USER_SPACE_VM_MANAGER.vm_manager().find_mmap_region(addr)
     }
 }
 
