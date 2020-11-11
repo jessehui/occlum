@@ -5,7 +5,10 @@ bitflags! {
         const READ        = 0x1;
         const WRITE       = 0x2;
         const EXEC        = 0x4;
+        const BLOCKED     = 0x8;
+        const CLEANED     = 0x10;
         const ALL         = Self::READ.bits | Self::WRITE.bits | Self::EXEC.bits;
+        const DEFAULT     = Self::READ.bits | Self::WRITE.bits;
     }
 }
 
@@ -25,10 +28,26 @@ impl VMPerms {
     pub fn can_execute(&self) -> bool {
         self.contains(VMPerms::EXEC)
     }
+
+    pub fn is_default(&self) -> bool {
+        self.contains(VMPerms::DEFAULT)
+    }
+
+    pub fn block() -> Self {
+        Self::BLOCKED
+    }
+
+    pub fn is_blocked(&self) -> bool {
+        self.contains(VMPerms::BLOCKED)
+    }
+
+    pub fn is_cleaned(&self) -> bool {
+        self.contains(VMPerms::CLEANED)
+    }
 }
 
 impl Default for VMPerms {
     fn default() -> Self {
-        VMPerms::ALL
+        VMPerms::DEFAULT
     }
 }

@@ -6,6 +6,10 @@ use super::process::{Process, ProcessFilter};
 use super::{table, TermStatus, ThreadRef, ThreadStatus};
 use crate::prelude::*;
 use crate::signal::{KernelSignal, SigNum};
+use crate::entry::{RUNNING, native};
+use crate::libc::pthread_join;
+use core::ptr;
+//use crate::vm::native_threads;
 
 pub fn do_exit_group(status: i32) {
     let term_status = TermStatus::Exited(status as u8);
@@ -89,8 +93,12 @@ fn exit_process(thread: &ThreadRef, term_status: TermStatus) {
 
     // The parent is the idle process
     if parent_inner.is_none() {
+        unsafe{
+            RUNNING = false;
+//            println!("native = {:?}", native as libc::pthread_t);
+            pthread_join(native, ptr::null_mut());
+        }
         debug_assert!(parent.pid() == 0);
-
         let pid = process.pid();
         let main_tid = pid;
         table::del_thread(main_tid).expect("tid must be in the table");
