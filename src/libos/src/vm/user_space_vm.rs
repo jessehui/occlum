@@ -35,6 +35,15 @@ impl UserSpaceVMManager {
         return Ok(UserSpaceVMRange::new(vm_range));
     }
 
+    pub fn init_mmap(ptr: usize, size: usize) -> Result<()> {
+        let perm = MemPerm::READ | MemPerm::WRITE;
+        // Change the page permission to RW
+        unsafe {
+            assert!(sgx_tprotect_rsrv_mem(ptr as *const c_void, size, perm.bits()) == sgx_status_t::SGX_SUCCESS);
+        }
+        Ok(())
+    }
+
     fn add_free_size(&self, user_space_vmrange: &UserSpaceVMRange) {
         *self.free_size.lock().unwrap() += user_space_vmrange.range().size();
     }
