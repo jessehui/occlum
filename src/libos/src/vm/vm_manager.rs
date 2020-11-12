@@ -10,6 +10,7 @@ use sgx_tstd::sync::SgxThreadSpinlock;
 use std::thread;
 use std::time::Duration;
 use crate::time::timespec_t;
+use crate::libc::{pthread_t, pthread_attr_t};
 
 #[derive(Clone, Debug)]
 pub enum VMInitializer {
@@ -384,6 +385,7 @@ impl VMManager {
             }
             effective_munmap_range
         };
+        
         self.dirty.lock().unwrap().push_back(SgxMutex::new(munmap_range));
 
         unsafe {
@@ -985,4 +987,15 @@ pub extern "C" fn mem_worker_thread_start(main: *mut libc::c_void) -> *mut libc:
     }
 
     ptr::null_mut()
+}
+
+
+extern "C" {
+    pub fn pthread_create(native: *mut pthread_t,
+        attr: *const pthread_attr_t,
+        f: extern "C" fn(*mut c_void) -> *mut c_void,
+        value: *mut c_void) -> c_int;
+    pub fn pthread_join(native: pthread_t,
+        value: *mut *mut c_void) -> c_int;
+    pub fn pthread_exit(value: *mut c_void);
 }
