@@ -89,6 +89,7 @@ pub extern "C" fn occlum_ecall_init(log_level: *const c_char, instance_dir: *con
             let attr: libc::pthread_attr_t = mem::zeroed();
             RUNNING = true;
             let ret = libc::pthread_create(&mut native, &attr, mem_worker_thread_start, &mut arg);
+            println!("init native = {:?}", native as libc::pthread_t);
         }
 
         HAS_INIT.store(true, Ordering::SeqCst);
