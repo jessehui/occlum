@@ -4,7 +4,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 use core::mem;
 use core::ptr;
-use crate::libc::{pthread_t, pthread_attr_t};
 
 use super::*;
 use crate::exception::*;

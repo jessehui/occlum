@@ -6,7 +6,6 @@ use super::process::{Process, ProcessFilter};
 use super::{table, TermStatus, ThreadRef, ThreadStatus};
 use crate::prelude::*;
 use crate::signal::{KernelSignal, SigNum};
-use crate::entry::{RUNNING, native};
 use crate::libc::pthread_join;
 use core::ptr;
 
@@ -92,11 +91,6 @@ fn exit_process(thread: &ThreadRef, term_status: TermStatus) {
 
     // The parent is the idle process
     if parent_inner.is_none() {
-        unsafe{
-            RUNNING = false;
-            println!("native = {:?}", native as libc::pthread_t);
-            pthread_join(native, ptr::null_mut());
-        }
         debug_assert!(parent.pid() == 0);
 
         let pid = process.pid();
