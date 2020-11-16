@@ -1,0 +1,570 @@
+name: SGX Hardware Mode Test
+
+# Controls when the action will run. Triggers the workflow on push or pull request
+on: [push]
+
+env:
+  nap_time: 60
+
+jobs:
+  # make-test-on-ubuntu:
+  #   runs-on: [self-hosted, SGX1-HW]
+  #   steps:
+  #   - name: Clean before running
+  #     run: |
+  #       sudo chown -R ${{ secrets.CI_ADMIN }} "${{ github.workspace }}"
+
+  #   - uses: actions/checkout@v1
+  #     with:
+  #       submodules: true
+
+  #   - name: Get Occlum version
+  #     run: echo "OCCLUM_VERSION=$(grep 'Version =' src/pal/include/occlum_version.h | awk '{print $4}')" >> $GITHUB_ENV;
+
+  #   - name: Create container
+  #     run: |
+  #       docker rm -f occlum_test || true
+  #       docker run --name=occlum_test -itd --privileged --rm --net host --device /dev/isgx -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:$OCCLUM_VERSION-ubuntu18.04
+
+  #   - name: Change download source of crates.io
+  #     run: |
+  #       docker exec occlum_test bash -c "cat <<- EOF >/root/.cargo/config
+  #       [source.crates-io]
+  #       registry = \"https://github.com/rust-lang/crates.io-index\"
+  #       replace-with = 'ustc'
+  #       [source.ustc]
+  #       registry = \"git://mirrors.ustc.edu.cn/crates.io-index\"
+  #       EOF"
+
+  #   - name: Build Dependencies
+  #     run:  docker exec occlum_test bash -c "cd /root/occlum; make submodule"
+
+  #   - name: Build Source
+  #     run: |
+  #       docker exec occlum_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=y make install"
+    
+  #   - name: Integration test
+  #     run:  docker exec occlum_test bash -c "cd /root/occlum; make test"
+
+  #   - name: Clean the environment
+  #     run: |
+  #       docker stop occlum_test
+
+
+  # C_cpp_rust_golang_embedded_mode_support_test:
+  #   needs: make-test-on-ubuntu
+  #   runs-on: [self-hosted, SGX1-HW]
+  #   steps:
+  #   - name: Clean before running
+  #     run: |
+  #       sudo chown -R ${{ secrets.CI_ADMIN }} "${{ github.workspace }}"
+
+  #   - name: Get occlum version
+  #     run: |
+  #       cd ${{ github.workspace }}
+  #       echo "OCCLUM_VERSION=$(grep "Version =" src/pal/include/occlum_version.h |  awk '{print $4}')" >> $GITHUB_ENV
+
+  #   - name: Create container
+  #     run: |
+  #       docker rm -f language_support_test || true
+  #       docker run --name=language_support_test -itd --privileged --rm --net host --device /dev/isgx -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
+
+  #   - name: Configure dependency source
+  #     run: |
+  #       docker exec language_support_test bash -c "cat <<- EOF >/root/.cargo/config
+  #       [source.crates-io]
+  #       registry = \"https://github.com/rust-lang/crates.io-index\"
+  #       replace-with = 'ustc'
+  #       [source.ustc]
+  #       registry = \"git://mirrors.ustc.edu.cn/crates.io-index\"
+  #       EOF"
+
+  #   # Just re-use the build from "make-test-on-ubuntu" job
+  #   - name: Make install
+  #     run: docker exec language_support_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=1 make install"
+
+  #   - name: C test
+  #     run: docker exec language_support_test bash -c "cd /root/occlum/demos/hello_c && make;
+  #           occlum new occlum_instance;
+  #           cp hello_world occlum_instance/image/bin;
+  #           cd occlum_instance && occlum build;
+  #           occlum run /bin/hello_world"
+
+  #   - name: C++ test
+  #     run: docker exec language_support_test bash -c "cd /root/occlum/demos/hello_cc && make;
+  #           occlum new occlum_instance;
+  #           cp hello_world occlum_instance/image/bin;
+  #           cd occlum_instance && occlum build;
+  #           occlum run /bin/hello_world"
+
+  #   - name: Rust test
+  #     run: docker exec language_support_test bash -c "cd /root/occlum/demos/rust && ./run_rust_demo_on_occlum.sh"
+
+  #   - name: Embedded mode test
+  #     run: docker exec language_support_test bash -c "cd /root/occlum/demos/embedded_mode && make;
+  #           make test"
+
+  #   - name: Go Server set up and run
+  #     run: docker exec language_support_test bash -c "export GO111MODULE=on && export GOPROXY=https://goproxy.cn;
+  #           cd /root/occlum/demos/golang/web_server && occlum-go get -u -v github.com/gin-gonic/gin;
+  #           occlum-go build -o web_server ./web_server.go;
+  #           ./run_golang_on_occlum.sh" &
+
+  #   - name: Curl test
+  #     run: |
+  #       sleep ${{ env.nap_time }};
+  #       docker exec language_support_test bash -c "curl http://127.0.0.1:8090/ping"
+
+  #   - name: Set up Golang grpc pingpong test
+  #     run: docker exec language_support_test bash -c "export GO111MODULE=on && export GOPROXY=https://goproxy.cn;
+  #           cd /root/occlum/demos/golang/grpc_pingpong && ./prepare_ping_pong.sh"
+
+  #   - name: Start Golang grpc pingpong server
+  #     run: docker exec language_support_test bash -c "cd /root/occlum/demos/golang/grpc_pingpong && ./run_pong_on_occlum.sh" &
+
+  #   - name: Run Golang grpc ping test
+  #     run: |
+  #       sleep ${{ env.nap_time }};
+  #       docker exec language_support_test bash -c "cd /root/occlum/demos/golang/grpc_pingpong && ./run_ping_on_occlum.sh"
+
+  #   - name: Run Golang sqlite test
+  #     run: docker exec language_support_test bash -c "export GO111MODULE=on && export GOPROXY=https://goproxy.cn;
+  #           cd /root/occlum/demos/golang/go_sqlite/ && ./run_go_sqlite_demo.sh"
+
+  #   - name: Clean the environment
+  #     run: |
+  #       docker stop language_support_test
+
+
+  # Java_support_test:
+  #   needs: make-test-on-ubuntu
+  #   runs-on: [self-hosted, SGX1-HW]
+  #   steps:
+  #   - name: Clean before running
+  #     run: |
+  #       sudo chown -R ${{ secrets.CI_ADMIN }} "${{ github.workspace }}"
+
+  #   - name: Get occlum version
+  #     run: |
+  #       cd ${{ github.workspace }}
+  #       echo "OCCLUM_VERSION=$(grep "Version =" src/pal/include/occlum_version.h |  awk '{print $4}')" >> $GITHUB_ENV
+
+  #   - name: Create container
+  #     run: |
+  #       docker rm -f java_support_test || true
+  #       docker run --name=java_support_test -itd --privileged --rm --net host --device /dev/isgx -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
+
+  #   - name: Configure dependency source
+  #     run: |
+  #       docker exec java_support_test bash -c "cat <<- EOF >/root/.cargo/config
+  #       [source.crates-io]
+  #       registry = \"https://github.com/rust-lang/crates.io-index\"
+  #       replace-with = 'ustc'
+  #       [source.ustc]
+  #       registry = \"git://mirrors.ustc.edu.cn/crates.io-index\"
+  #       EOF"
+
+  #   # Just re-use the build from "make-test-on-ubuntu" job
+  #   - name: Make install
+  #     run: docker exec java_support_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=1 make install"
+
+  #   - name: Compile Java
+  #     run: docker exec java_support_test bash -c "cd /root/occlum/demos/java && occlum-javac ./hello_world/Main.java"
+
+  #   - name: Run hello world
+  #     run: docker exec java_support_test bash -c "cd /root/occlum/demos/java && ./run_java_on_occlum.sh hello"
+
+  #   - name: Clean the environment
+  #     run: docker stop java_support_test
+
+
+  # Bazel_test:
+  #   needs: make-test-on-ubuntu
+  #   runs-on: [self-hosted, SGX1-HW]
+  #   steps:
+  #   - name: Clean before running
+  #     run: |
+  #       sudo chown -R ${{ secrets.CI_ADMIN }} "${{ github.workspace }}"
+
+  #   - name: Get occlum version
+  #     run: |
+  #       cd ${{ github.workspace }}
+  #       echo "OCCLUM_VERSION=$(grep "Version =" src/pal/include/occlum_version.h |  awk '{print $4}')" >> $GITHUB_ENV
+
+  #   - name: Create container
+  #     run: |
+  #       docker rm -f hello_bazel_test || true
+  #       docker run --name=hello_bazel_test -itd --privileged --rm --net host --device /dev/isgx -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
+
+  #   - name: Configure dependency source
+  #     run: |
+  #       docker exec hello_bazel_test bash -c "cat <<- EOF >/root/.cargo/config
+  #       [source.crates-io]
+  #       registry = \"https://github.com/rust-lang/crates.io-index\"
+  #       replace-with = 'ustc'
+  #       [source.ustc]
+  #       registry = \"git://mirrors.ustc.edu.cn/crates.io-index\"
+  #       EOF"
+
+  #   # Just re-use the build from "make-test-on-ubuntu" job
+  #   - name: Make install
+  #     run: docker exec hello_bazel_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=1 make install"
+
+  #   - name: Install bazel
+  #     run: docker exec hello_bazel_test bash -c "cd /root/occlum/demos/hello_bazel && wget https://github.com/bazelbuild/bazel/releases/download/3.2.0/bazel-3.2.0-installer-linux-x86_64.sh;
+  #             chmod +x bazel-3.2.0-installer-linux-x86_64.sh;
+  #             ./bazel-3.2.0-installer-linux-x86_64.sh"
+
+  #   - name: Build bazel dependencies
+  #     run: docker exec hello_bazel_test bash -c "cd /root/occlum/demos/hello_bazel && ./build_bazel_sample.sh"
+
+  #   - name: Test bazel
+  #     run: docker exec hello_bazel_test bash -c "cd /root/occlum/demos/hello_bazel && occlum new occlum_instance;
+  #           cp examples/cpp-tutorial/stage3/bazel-bin/main/hello-world occlum_instance/image/bin;
+  #           cd occlum_instance && occlum build;
+  #           occlum run /bin/hello-world"
+
+  #   - name: Clean the environment
+  #     run: docker stop hello_bazel_test
+
+
+  # Sqlite_test:
+  #   needs: make-test-on-ubuntu
+  #   runs-on: [self-hosted, SGX1-HW]
+  #   steps:
+  #   - name: Clean before running
+  #     run: |
+  #       sudo chown -R ${{ secrets.CI_ADMIN }} "${{ github.workspace }}"
+
+  #   - name: Get occlum version
+  #     run: |
+  #       cd ${{ github.workspace }}
+  #       echo "OCCLUM_VERSION=$(grep "Version =" src/pal/include/occlum_version.h |  awk '{print $4}')" >> $GITHUB_ENV
+
+  #   - name: Create container
+  #     run: |
+  #       docker rm -f sqlite_test || true
+  #       docker run --name=sqlite_test -itd --privileged --rm --net host --device /dev/isgx -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
+
+  #   - name: Configure dependency source
+  #     run: |
+  #       docker exec sqlite_test bash -c "cat <<- EOF >/root/.cargo/config
+  #       [source.crates-io]
+  #       registry = \"https://github.com/rust-lang/crates.io-index\"
+  #       replace-with = 'ustc'
+  #       [source.ustc]
+  #       registry = \"git://mirrors.ustc.edu.cn/crates.io-index\"
+  #       EOF"
+
+  #   # Just re-use the build from "make-test-on-ubuntu" job
+  #   - name: Make install
+  #     run: docker exec sqlite_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=1 make install"
+
+  #   - name: Build sqlite dependencies
+  #     run: docker exec sqlite_test bash -c "cd /root/occlum/demos/sqlite && ./download_and_build_sqlite.sh"
+
+  #   - name: Run sqlite test
+  #     run: docker exec sqlite_test bash -c "cd /root/occlum/demos/sqlite && ./run_sqlite_on_occlum.sh"
+
+  #   - name: Clean the environment
+  #     run: docker stop sqlite_test
+
+
+  # Python_support_test:
+  #   needs: make-test-on-ubuntu
+  #   runs-on: [self-hosted, SGX1-HW]
+  #   steps:
+  #   - name: Clean before running
+  #     run: |
+  #       sudo chown -R ${{ secrets.CI_ADMIN }} "${{ github.workspace }}"
+
+  #   - name: Create container
+  #     run: |
+  #       docker rm -f python_support_test || true
+  #       docker run --name=python_support_test -itd --privileged --rm --net host --device /dev/isgx -v $GITHUB_WORKSPACE:/root/occlum occlumbackup/occlum:latest-ubuntu18.04-python
+
+  #   - name: Configure dependency source
+  #     run: |
+  #       docker exec python_support_test bash -c "cat <<- EOF >/root/.cargo/config
+  #       [source.crates-io]
+  #       registry = \"https://github.com/rust-lang/crates.io-index\"
+  #       replace-with = 'ustc'
+  #       [source.ustc]
+  #       registry = \"git://mirrors.ustc.edu.cn/crates.io-index\"
+  #       EOF"
+
+  #   # Just re-use the build from "make-test-on-ubuntu" job
+  #   - name: Make install
+  #     run: docker exec python_support_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=1 make install"
+
+  #   - name: Run python support test
+  #     run: docker exec python_support_test bash -c "cd /root/occlum/demos/python; ./run_python_on_occlum.sh"
+
+  #   - name: Clean the environment
+  #     run: docker stop python_support_test
+
+
+  # Openvino_test:
+  #   needs: make-test-on-ubuntu
+  #   runs-on: [self-hosted, SGX1-HW]
+  #   steps:
+  #   - name: Clean before running
+  #     run: |
+  #       sudo chown -R ${{ secrets.CI_ADMIN }} "${{ github.workspace }}"
+
+  #   - name: Create container
+  #     run: |
+  #       docker rm -f openvino_test || true
+  #       docker run --name=openvino_test -itd --privileged --rm --net host --device /dev/isgx -v $GITHUB_WORKSPACE:/root/occlum occlumbackup/occlum:latest-ubuntu18.04-openvino
+
+  #   - name: Configure dependency source
+  #     run: |
+  #       docker exec openvino_test bash -c "cat <<- EOF >/root/.cargo/config
+  #       [source.crates-io]
+  #       registry = \"https://github.com/rust-lang/crates.io-index\"
+  #       replace-with = 'ustc'
+  #       [source.ustc]
+  #       registry = \"git://mirrors.ustc.edu.cn/crates.io-index\"
+  #       EOF"
+
+  #   # Just re-use the build from "make-test-on-ubuntu" job
+  #   - name: Make install
+  #     run: docker exec openvino_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=1 make install"
+
+  #   - name: Run openVINO benchmark
+  #     run: docker exec openvino_test bash -c "cd /root/demos/openvino && ./run_benchmark_on_occlum.sh"
+
+  #   - name: Clean the environment
+  #     run: docker stop openvino_test
+
+
+  # Too slow
+  # Xgboost_test:
+  #   # needs: make-test-on-ubuntu
+  #   runs-on: [self-hosted, SGX1-HW]
+  #   steps:
+  #   - name: Clean before running
+  #     run: |
+  #       sudo chown -R ${{ secrets.CI_ADMIN }} "${{ github.workspace }}"
+
+  #   - name: Get occlum version
+  #     run: |
+  #       cd ${{ github.workspace }}
+  #       echo "OCCLUM_VERSION=$(grep "Version =" src/pal/include/occlum_version.h |  awk '{print $4}')" >> $GITHUB_ENV
+
+  #   - name: Create container
+  #     run: |
+  #       docker rm -f xgboost_test || true
+  #       docker run --name=xgboost_test -itd --privileged --rm --net host --device /dev/isgx -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
+
+  #   - name: Configure dependency source
+  #     run: |
+  #       docker exec xgboost_test bash -c "cat <<- EOF >/root/.cargo/config
+  #       [source.crates-io]
+  #       registry = \"https://github.com/rust-lang/crates.io-index\"
+  #       replace-with = 'ustc'
+  #       [source.ustc]
+  #       registry = \"git://mirrors.ustc.edu.cn/crates.io-index\"
+  #       EOF"
+
+  #   # Just re-use the build from "make-test-on-ubuntu" job
+  #   - name: Make install
+  #     run: docker exec xgboost_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=1 make install"
+
+  #   - name: Build xgboost dependencies
+  #     run: docker exec xgboost_test bash -c "cd /root/occlum/demos/xgboost && ./download_and_build_xgboost.sh"
+
+  #   - name: Run xgboost test
+  #     run: docker exec xgboost_test bash -c "cd /root/occlum/demos/xgboost && make test"
+
+  #   - name: Run xgboost cluster test
+  #     run: docker exec xgboost_test bash -c "cd /root/occlum/demos/xgboost && make test-local-cluster"
+
+  #   - name: Clean the environment
+  #     run: docker stop xgboost_test
+
+
+  # Internet too slow
+  # Local_attestation_test:
+  #   needs: make-test-on-ubuntu
+  #   runs-on: [self-hosted, SGX1-HW]
+  #   steps:
+  #   - name: Clean before running
+  #     run: |
+  #       sudo chown -R ${{ secrets.CI_ADMIN }} "${{ github.workspace }}"
+
+  #   - name: Get occlum version
+  #     run: |
+  #       cd ${{ github.workspace }}
+  #       echo "OCCLUM_VERSION=$(grep "Version =" src/pal/include/occlum_version.h |  awk '{print $4}')" >> $GITHUB_ENV
+
+  #   - name: Create container
+  #     run: |
+  #       docker rm -f la_test || true
+  #       docker run --name=la_test -itd --privileged --rm --net host --device /dev/isgx -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
+
+  #   - name: Configure dependency source
+  #     run: |
+  #       docker exec la_test bash -c "cat <<- EOF >/root/.cargo/config
+  #       [source.crates-io]
+  #       registry = \"https://github.com/rust-lang/crates.io-index\"
+  #       replace-with = 'ustc'
+  #       [source.ustc]
+  #       registry = \"git://mirrors.ustc.edu.cn/crates.io-index\"
+  #       EOF"
+
+  #   # Just re-use the build from "make-test-on-ubuntu" job
+  #   - name: Make install
+  #     run: docker exec la_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=1 make install"
+
+  #   - name: Build LA dependencies
+  #     run: docker exec la_test bash -c "cd /root/occlum/demos/local_attestation && ./download_src_and_build_deps.sh"
+
+  #   - name: Run LA test
+  #     run: docker exec la_test bash -c "cd /root/occlum/demos/local_attestation && make;
+  #             make test"
+
+  #   - name: Clean the environment
+  #     run: docker stop la_test
+
+  # Internet too slow
+  # Https_server_test:
+  #   needs: make-test-on-ubuntu
+  #   runs-on: [self-hosted, SGX1-HW]
+  #   steps:
+  #   - name: Clean before running
+  #     run: |
+  #       sudo chown -R ${{ secrets.CI_ADMIN }} "${{ github.workspace }}"
+
+  #   - name: Get occlum version
+  #     run: |
+  #       cd ${{ github.workspace }}
+  #       echo "OCCLUM_VERSION=$(grep "Version =" src/pal/include/occlum_version.h |  awk '{print $4}')" >> $GITHUB_ENV
+
+  #   - name: Create container
+  #     run: |
+  #       docker rm -f https_test || true
+  #       docker run --name=https_test -itd --privileged --rm --net host --device /dev/isgx -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
+
+  #   - name: Configure dependency source
+  #     run: |
+  #       docker exec https_test bash -c "cat <<- EOF >/root/.cargo/config
+  #       [source.crates-io]
+  #       registry = \"https://github.com/rust-lang/crates.io-index\"
+  #       replace-with = 'ustc'
+  #       [source.ustc]
+  #       registry = \"git://mirrors.ustc.edu.cn/crates.io-index\"
+  #       EOF"
+
+  #   # Just re-use the build from "make-test-on-ubuntu" job
+  #   - name: Make install
+  #     run: docker exec https_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=1 make install"
+
+  #   - name: Build https server dependencies
+  #     run: docker exec https_test bash -c "cd /root/occlum/demos/https_server && bash -x ./download_and_build_mongoose.sh"
+
+  #   - name: Run https server
+  #     run: docker exec https_test bash -c "cd /root/occlum/demos/https_server && ./run_https_server_in_occlum.sh" &
+
+  #   - name: Curl test
+  #     run: |
+  #       sleep ${{ env.nap_time }};
+  #       docker exec https_test bash -c "curl -k https://127.0.0.1:8443"
+
+  #   - name: Clean the environment
+  #     run: docker stop https_test
+
+
+  # Lack support for pipe epoll
+  # Fish_test:
+  #   needs: make-test-on-ubuntu
+  #   runs-on: [self-hosted, SGX1-HW]
+  #   steps:
+  #   - name: Clean before running
+  #     run: |
+  #       sudo chown -R ${{ secrets.CI_ADMIN }} "${{ github.workspace }}"
+
+  #   - name: Get occlum version
+  #     run: |
+  #       cd ${{ github.workspace }}
+  #       echo "OCCLUM_VERSION=$(grep "Version =" src/pal/include/occlum_version.h |  awk '{print $4}')" >> $GITHUB_ENV
+
+  #   - name: Create container
+  #     run: |
+  #       docker rm -f fish_test || true
+  #       docker run --name=fish_test -itd --privileged --rm --net host --device /dev/isgx -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
+
+  #   - name: Configure dependency source
+  #     run: |
+  #       docker exec fish_test bash -c "cat <<- EOF >/root/.cargo/config
+  #       [source.crates-io]
+  #       registry = \"https://github.com/rust-lang/crates.io-index\"
+  #       replace-with = 'ustc'
+  #       [source.ustc]
+  #       registry = \"git://mirrors.ustc.edu.cn/crates.io-index\"
+  #       EOF"
+
+  #   # Just re-use the build from "make-test-on-ubuntu" job
+  #   - name: Make install
+  #     run: docker exec fish_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=1 make install"
+
+  #   - name: Build Fish dependencies
+  #     run: docker exec fish_test bash -c "cd /root/occlum/demos/fish && ./download_and_build.sh"
+
+  #   - name: Run Fish test
+  #     run: docker exec fish_test bash -c "cd /root/occlum/demos/fish && ./run_fish_test.sh"
+
+  #   - name: Run Fish process rlimit test
+  #     run: docker exec fish_test bash -c "cd /root/occlum/demos/fish && ./run_per_process_config_test.sh"
+
+  #   - name: Clean the environment
+  #     run: docker stop fish_test
+
+
+  # Known bug
+  # Grpc_test:
+  #   runs-on: self-hosted
+  #   steps:
+  #   - name: Clean before running
+  #     run: |
+  #       sudo chown -R ${{ secrets.CI_ADMIN }} "${{ github.workspace }}"
+
+  #   - uses: actions/checkout@v1
+  #     with:
+  #       submodules: true
+
+  #   - name: Create container
+  #     run: |
+  #       docker rm -f grpc_test || true
+  #       docker run --name=grpc_test -itd --privileged --rm --net host --device /dev/isgx -v $GITHUB_WORKSPACE:/root/occlum occlumbackup/occlum:latest-ubuntu18.04-grpc
+
+  #   - name: Change download source of crates.io
+  #     run: |
+  #       docker exec grpc_test bash -c "cat <<- EOF >/root/.cargo/config
+  #       [source.crates-io]
+  #       registry = \"https://github.com/rust-lang/crates.io-index\"
+  #       replace-with = 'ustc'
+  #       [source.ustc]
+  #       registry = \"git://mirrors.ustc.edu.cn/crates.io-index\"
+  #       EOF"
+
+  #   - name: Build dependencies
+  #     run: docker exec grpc_test bash -c "cd /root/occlum; make submodule"
+
+  #   - name: Make install
+  #     run: docker exec grpc_test bash -c "cd /root/occlum; OCCLUM_RELEASE_BUILD=y make install"
+
+  #   - name: Prepare grpc sample project
+  #     run: docker exec grpc_test bash -c "cd /root/demos/grpc && ./prepare_client_server.sh"
+
+  #   - name: Run grpc server
+  #     run: docker exec grpc_test bash -c "cd /root/demos/grpc && ./run_server_on_occlum.sh" &
+
+  #   - name: Run grpc client
+  #     run: |
+  #       sleep ${{ env.nap_time }};
+  #       docker exec grpc_test bash -c "cd /root/demos/grpc && ./run_client_on_occlum.sh"
+
+  #   - name: Clean the environment
+  #     run: |
+  #       docker stop grpc_test
