@@ -433,22 +433,41 @@ impl VMManager {
         self.dirty.lock().unwrap().push_back(munmap_range);
         trace!("after insert block vma: vmas = {:?}\n",self.vmas.lock().unwrap());
 
-        let mut manager_ptr = self as *const _ as *mut VMManager;
-        let mut native: libc::pthread_t = 0 as libc::pthread_t;
-        let ret = unsafe{libc::pthread_create(&mut native, &attr, mem_worker_thread_start, manager_ptr as *mut _)};
-        unsafe{
-            trace!("native = {:?}", native as libc::pthread_t);
-            native_threads.push(native)};
         unsafe {
             self.spin_lock.0.unlock();
         }
 
         Ok(())
+    }
 
-        // // NEW TEST
-        // self.dirty.inner.push(munmap_range);
-        // trace!("dirty queue length = {}", self.dirty.inner.len());
-        // Ok(())
+    pub fn update_munmap_range(&self) -> Result<()> {
+        let mut working = true;
+        while working {
+            let mut dirty_queue = self.dirty.lock().unwrap();
+            if !dirty_queue.is_empty() {
+                if dirty_queue.len() == 1 {
+                    working = false;
+                }
+                let munmap_range = dirty_queue.pop_front().unwrap();
+                drop(dirty_queue);
+                //println!("clean munmap range = {:?}", munmap_range_with_lock);
+                unsafe{
+                    munmap_range.clean()?;
+                    self.spin_lock.0.lock();
+                }
+                let (start_idx, end_idx) = self.find_vma_idxs_of_a_range(&munmap_range).unwrap();
+                // println!("bgthread before remove vmas:{:?}\n", self.vmas.lock().unwrap());
+                // println!("bgthread removed idx = {}", start_idx);
+                self.vmas.lock().unwrap().remove(start_idx);
+                unsafe {
+                    self.spin_lock.0.unlock();
+                }
+            }
+            if !unsafe{RUNNING} {
+                return Ok(());
+            }
+        }
+        Ok(())
     }
 
     pub fn mremap(&self, options: &VMRemapOptions) -> Result<usize> {
@@ -988,21 +1007,16 @@ impl Drop for VMManager {
     }
 }
 
-pub extern "C" fn mem_worker_thread_start(vm_manager: *mut libc::c_void) -> *mut libc::c_void {
-    //Box::from_raw(main as *mut Box<dyn FnOnce()>)();
-    unsafe {
-        let vm_manager = vm_manager as *mut VMManager;
-        let vm_range = (*vm_manager).dirty.lock().unwrap().pop_front().unwrap();
-        trace!("bgthread memset range = {:?}", vm_range);
-        clean_munmap_range(vm_range);
-        (*vm_manager).spin_lock.0.lock();
-        let (start_idx, end_idx) = (*vm_manager).find_vma_idxs_of_a_range(&vm_range).unwrap();
-        trace!("bgthread before remove vmas:{:?}\n", (*vm_manager).vmas.lock().unwrap());
-        trace!("bgthread removed idx = {}", start_idx);
-        (*vm_manager).vmas.lock().unwrap().remove(start_idx);
-        (*vm_manager).spin_lock.0.unlock();
+pub extern "C" fn mem_worker_thread_start(main: *mut libc::c_void) -> *mut libc::c_void {
+    while unsafe{RUNNING} {
+        let all_process = get_all_processes();
+        for process in all_process.iter() {
+            if let Some(thread) = process.main_thread() {
+                thread.vm().get_mmap_manager().update_munmap_range();
+            }
+        }
     }
-    trace!("memset done\n");
+
     ptr::null_mut()
 }
 
@@ -1014,13 +1028,4 @@ extern "C" {
     pub fn pthread_join(native: pthread_t,
         value: *mut *mut c_void) -> c_int;
     pub fn pthread_exit(value: *mut c_void);
-}
-
-pub static mut native_threads: Vec<libc::pthread_t> = Vec::new();
-static mut attr: libc::pthread_attr_t = 0 as libc::pthread_attr_t;
-
-unsafe fn clean_munmap_range(range: VMRange) -> Result<()> {
-    //trace!("unmap range: {:?}", range);
-    range.clean()?;
-    Ok(())
 }
