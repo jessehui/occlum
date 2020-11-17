@@ -263,7 +263,7 @@ impl VMRemapOptions {
 pub struct VMManager {
     range: VMRange,
     vmas: SgxMutex<Vec<VMArea>>,
-    // dirty: SgxMutex<VMRange>,
+    dirty: SgxMutex<VecDeque<VMRange>>,
     spin_lock: SpinLock,
 }
 
@@ -299,9 +299,9 @@ impl VMManager {
             };
             SgxMutex::new(vec![start_sentry, end_sentry])
         };
-        // let dirty = SgxMutex::new(VMRange::default());
+        let dirty = SgxMutex::new(VecDeque::new());
         let spin_lock = SpinLock::default();
-        Ok(VMManager { range, vmas, spin_lock})
+        Ok(VMManager { range, vmas, dirty, spin_lock})
     }
 
     pub fn range(&self) -> &VMRange {
@@ -340,15 +340,22 @@ impl VMManager {
         if options.perms.can_execute() {
             Self::apply_perms(&new_vma, new_vma.perms());
         }
-
+        trace!("Mmap: new_vma = {:?}, idx = {}", new_vma, insert_idx);
         // After initializing, we can safely insert the new VMA
         self.insert_new_vma(insert_idx, new_vma);
+        trace!("after mmap: vmas = {:?}\n", self.vmas.lock().unwrap());
         unsafe {
             self.spin_lock.0.unlock();
         }
-
         Ok(new_addr)
     }
+
+    // fn block_range(&self, range: VMRange) -> Result<()> {
+    //     let (start_idx, end_idx) = find_vma_idxs_of_a_range(range)?;
+    //     self.vmas.lock().unwrap().drain(start_idx..end_idx);
+    //     let blocking_vma = VMArea::new(range, )
+    //     insert_new_vma(start_idx, )
+    // }
 
     pub fn munmap(&self, addr: usize, size: usize) -> Result<()> {
         let size = {
@@ -372,13 +379,17 @@ impl VMManager {
             effective_munmap_range
         };
 
-        let range_ptr = Box::new(munmap_range.clone());
-        let arg = Box::into_raw(range_ptr);
-        let ret = unsafe{libc::pthread_create(&mut native, &attr, mem_worker_thread_start, arg as *mut _)};
-
         unsafe {
             self.spin_lock.0.lock();
         }
+        // self.block_range(munmap_range);
+        let ret = self.find_vma_idxs_of_a_range(&munmap_range);
+        if ret.is_none(){
+            return Ok(());
+        }
+        let (mut start_idx, end_idx) = ret.unwrap();
+        trace!("Unmap range = {:?}, corresponding start_idx = {:?}, end_idx = {:?}", munmap_range, start_idx, end_idx);
+
         let old_vmas = {
             let mut old_vmas = Vec::new();
             let mut current = self.vmas.lock().unwrap();
@@ -411,18 +422,34 @@ impl VMManager {
             })
             .collect();
         *self.vmas.lock().unwrap() = new_vmas;
+        trace!("after unmmap: vmas = {:?}\n", self.vmas.lock().unwrap());
+        // insert a new vma to block mmap from this range which will be memset by bgthread
+        let block_vma_for_memset = VMArea::new(munmap_range, VMPerms::block(), None);
+        // if munmap a right part of a range, when inserting block vma, the idx should be plus 1.
+        if munmap_range.start == self.vmas.lock().unwrap()[start_idx].end {
+            start_idx += 1;
+        }
+        self.insert_new_vma(start_idx, block_vma_for_memset);
+        self.dirty.lock().unwrap().push_back(munmap_range);
+        trace!("after insert block vma: vmas = {:?}\n",self.vmas.lock().unwrap());
+
+        let mut manager_ptr = self as *const _ as *mut VMManager;
+        let mut native: libc::pthread_t = 0 as libc::pthread_t;
+        let ret = unsafe{libc::pthread_create(&mut native, &attr, mem_worker_thread_start, manager_ptr as *mut _)};
+        unsafe{
+            trace!("native = {:?}", native as libc::pthread_t);
+            native_threads.push(native)};
         unsafe {
             self.spin_lock.0.unlock();
         }
+
         Ok(())
 
         // // NEW TEST
         // self.dirty.inner.push(munmap_range);
-        // println!("dirty queue length = {}", self.dirty.inner.len());
+        // trace!("dirty queue length = {}", self.dirty.inner.len());
         // Ok(())
     }
-
-    
 
     pub fn mremap(&self, options: &VMRemapOptions) -> Result<usize> {
         let old_addr = options.old_addr();
@@ -695,6 +722,25 @@ impl VMManager {
             .position(|vma| vma.is_superset_of(target_range))
     }
 
+    fn find_vma_idxs_of_a_range(&self, range: &VMRange) -> Option<(usize, usize)> {
+        //let result = Vec::new();
+        let mut start_idx = None;
+        let mut end_idx = None;
+        for (idx, vma) in self.vmas.lock().unwrap().iter().enumerate() {
+            if vma.range().contains(range.start()) {
+               // trace!("idx = {:?}, vma = {:?}", idx, vma.range());
+                start_idx = Some(idx);
+            }
+            if vma.range().contains(range.end() - 1) {
+                end_idx = Some(idx);
+            }
+        }
+        if start_idx == None {
+            return None;
+        }
+        return Some((start_idx.unwrap(), end_idx.unwrap()));
+    }
+
     // Returns whether the requested range is free
     fn is_free_range(&self, request_range: &VMRange) -> bool {
         self.range.is_superset_of(request_range)
@@ -835,8 +881,50 @@ impl VMManager {
         }
     }
 
+    fn insert_block_vma(&self, insert_idx: usize, new_vma: VMArea) {
+        let vmas = &mut self.vmas.lock().unwrap();
+        // New VMA can only be inserted between the two sentry VMAs
+        debug_assert!(0 < insert_idx && insert_idx < vmas.len());
+
+        let left_idx = insert_idx - 1;
+        let right_idx = insert_idx;
+
+        let left_vma = &vmas[left_idx];
+        let right_vma = &vmas[right_idx];
+
+        // Double check the order
+        debug_assert!(left_vma.end() <= new_vma.start());
+        debug_assert!(new_vma.end() <= right_vma.start());
+
+        let left_mergable = Self::can_merge_vmas(left_vma, &new_vma);
+        let right_mergable = Self::can_merge_vmas(&new_vma, right_vma);
+
+        drop(left_vma);
+        drop(right_vma);
+
+        match (left_mergable, right_mergable) {
+            (false, false) => {
+                vmas.insert(insert_idx, new_vma);
+            }
+            (true, false) => {
+                vmas[left_idx].set_end(new_vma.end);
+            }
+            (false, true) => {
+                vmas[right_idx].set_start(new_vma.start);
+            }
+            (true, true) => {
+                let left_new_end = vmas[right_idx].end();
+                vmas[left_idx].set_end(left_new_end);
+                vmas.remove(right_idx);
+            }
+        }
+    }
+
     fn can_merge_vmas(left: &VMArea, right: &VMArea) -> bool {
         debug_assert!(left.end() <= right.start());
+        if left.perms().is_blocked() || right.perms().is_blocked() {
+            return false;
+        }
 
         // Both of the two VMAs must not be sentry (whose size == 0)
         if left.size() == 0 || right.size() == 0 {
@@ -900,15 +988,23 @@ impl Drop for VMManager {
     }
 }
 
-pub extern "C" fn mem_worker_thread_start(range: *mut libc::c_void) -> *mut libc::c_void {
+pub extern "C" fn mem_worker_thread_start(vm_manager: *mut libc::c_void) -> *mut libc::c_void {
     //Box::from_raw(main as *mut Box<dyn FnOnce()>)();
     unsafe {
-        let munmap_range = range as *mut VMRange;
-        clean_munmap_range(*munmap_range);
+        let vm_manager = vm_manager as *mut VMManager;
+        let vm_range = (*vm_manager).dirty.lock().unwrap().pop_front().unwrap();
+        trace!("bgthread memset range = {:?}", vm_range);
+        clean_munmap_range(vm_range);
+        (*vm_manager).spin_lock.0.lock();
+        let (start_idx, end_idx) = (*vm_manager).find_vma_idxs_of_a_range(&vm_range).unwrap();
+        trace!("bgthread before remove vmas:{:?}\n", (*vm_manager).vmas.lock().unwrap());
+        trace!("bgthread removed idx = {}", start_idx);
+        (*vm_manager).vmas.lock().unwrap().remove(start_idx);
+        (*vm_manager).spin_lock.0.unlock();
     }
+    trace!("memset done\n");
     ptr::null_mut()
 }
-
 
 extern "C" {
     pub fn pthread_create(native: *mut pthread_t,
@@ -920,57 +1016,11 @@ extern "C" {
     pub fn pthread_exit(value: *mut c_void);
 }
 
-// lazy_static! {
-//     
-// }
-
-static mut native: libc::pthread_t = 0 as libc::pthread_t;
+pub static mut native_threads: Vec<libc::pthread_t> = Vec::new();
 static mut attr: libc::pthread_attr_t = 0 as libc::pthread_attr_t;
 
 unsafe fn clean_munmap_range(range: VMRange) -> Result<()> {
-    //println!("unmap range: {:?}", range);
+    //trace!("unmap range: {:?}", range);
     range.clean()?;
     Ok(())
-
-    // let mut dirty_queue = self.dirty.lock().unwrap();
-    // println!("clean thread dirty queue length = {}", dirty_queue.len());
-    // if !dirty_queue.is_empty() {
-    //     let munmap_range_with_lock = dirty_queue.pop_front().unwrap();
-    //     drop(dirty_queue);
-    //     println!("clean munmap range = {:?}", munmap_range_with_lock);
-    //     unsafe{
-    //         munmap_range_with_lock.lock().unwrap().clean()?;
-    //     }
-    //     let old_vmas = {
-    //         let mut old_vmas = Vec::new();
-    //         let mut current = self.vmas.lock().unwrap();
-    //         std::mem::swap(&mut *current, &mut old_vmas);
-    //         old_vmas
-    //         //self.vmas.lock().unwrap().clone()
-    //     };
-    //     let new_vmas = old_vmas
-    //         .into_iter()
-    //         .flat_map(|vma| {
-    //             // Keep the two sentry VMA intact
-    //             if vma.size() == 0 {
-    //                 return vec![vma];
-    //             }
-
-    //             let intersection_vma = match vma.intersect(&munmap_range) {
-    //                 None => return vec![vma],
-    //                 Some(intersection_vma) => intersection_vma,
-    //             };
-
-    //             // File-backed VMA needs to be flushed upon munmap
-    //             Self::flush_file_vma(&intersection_vma);
-
-    //             // Reset memory permissions
-    //             Self::apply_perms(&intersection_vma, VMPerms::default());
-
-    //             vma.subtract(&intersection_vma)
-    //         })
-    //         .collect();
-    //     *self.vmas.lock().unwrap() = new_vmas;
-    // }
-    // Ok(())
 }
