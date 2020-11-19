@@ -26,29 +26,6 @@ RUN apt-get update && DEBIAN_FRONTEND="noninteractive" apt-get install -y --no-i
         golang-go \
         jq \
         kmod \
-        libboost-system-dev \
-        libboost-thread-dev \
-        libcurl4-openssl-dev \
-        libfuse-dev \
-        libjsoncpp-dev \
-        liblog4cpp5-dev \
-        libprotobuf-c0-dev \
-        libprotobuf-dev \
-        libssl-dev \
-        libtool \
-        libxml2-dev \
-        ocaml \
-        ocamlbuild \
-        pkg-config \
-        protobuf-compiler \
-        python \
-        python-pip \
-        sudo \
-        unzip \
-        uuid-dev \
-        vim \
-        wget \
-        zip \
         && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
@@ -61,51 +38,51 @@ RUN wget http://www.etallen.com/cpuid/cpuid-20200211.x86_64.tar.gz && \
     rm -rf /tmp/cpuid-20200211*
 
 # Install SGX SDK
-WORKDIR /tmp
-RUN git clone -b sgx_2.11_for_occlum https://github.com/occlum/linux-sgx && \
-    mkdir /etc/init && \
-    cd linux-sgx && make preparation && \
-    ./compile_and_install.sh no_mitigation USE_OPT_LIBS=2 && \
-    echo 'source /opt/intel/sgxsdk/environment' >> /root/.bashrc && \
-    rm -rf /tmp/linux-sgx
+# WORKDIR /tmp
+# RUN git clone -b sgx_2.11_for_occlum https://github.com/occlum/linux-sgx && \
+#     mkdir /etc/init && \
+#     cd linux-sgx && make preparation && \
+#     ./compile_and_install.sh no_mitigation USE_OPT_LIBS=2 && \
+#     echo 'source /opt/intel/sgxsdk/environment' >> /root/.bashrc && \
+#     rm -rf /tmp/linux-sgx
 
-# Install Rust
-ENV PATH="/root/.cargo/bin:$PATH"
-ENV OCCLUM_RUST_VERSION=nightly-2020-09-08
-RUN curl https://sh.rustup.rs -sSf | \
-        sh -s -- --default-toolchain ${OCCLUM_RUST_VERSION} -y && \
-    rm -rf /root/.cargo/registry && rm -rf /root/.cargo/git && \
-    cargo -V && \
-    cargo install sccache
+# # Install Rust
+# ENV PATH="/root/.cargo/bin:$PATH"
+# ENV OCCLUM_RUST_VERSION=nightly-2020-09-08
+# RUN curl https://sh.rustup.rs -sSf | \
+#         sh -s -- --default-toolchain ${OCCLUM_RUST_VERSION} -y && \
+#     rm -rf /root/.cargo/registry && rm -rf /root/.cargo/git && \
+#     cargo -V && \
+#     cargo install sccache
 
-# Install Occlum toolchain
-COPY toolchains/gcc /tmp/gcc
-WORKDIR /tmp
-RUN cd gcc && ./build.sh && ./install_zlib.sh && rm -rf /tmp/gcc
-ENV PATH="/opt/occlum/build/bin:/usr/local/occlum/bin:$PATH"
+# # Install Occlum toolchain
+# COPY toolchains/gcc /tmp/gcc
+# WORKDIR /tmp
+# RUN cd gcc && ./build.sh && ./install_zlib.sh && rm -rf /tmp/gcc
+# ENV PATH="/opt/occlum/build/bin:/usr/local/occlum/bin:$PATH"
 
-# Install Occlum Golang toolchain
-COPY toolchains/golang /tmp/golang
-WORKDIR /tmp
-RUN cd golang && ./build.sh && rm -rf /tmp/golang
-ENV PATH="/opt/occlum/toolchains/golang/bin:$PATH"
+# # Install Occlum Golang toolchain
+# COPY toolchains/golang /tmp/golang
+# WORKDIR /tmp
+# RUN cd golang && ./build.sh && rm -rf /tmp/golang
+# ENV PATH="/opt/occlum/toolchains/golang/bin:$PATH"
 
-# Install Occlum Rust toolchain
-COPY toolchains/rust /tmp/rust
-WORKDIR /tmp
-RUN cd rust && ./build.sh && rm -rf /tmp/rust
-ENV PATH="/opt/occlum/toolchains/rust/bin:$PATH"
-ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/opt/intel/sgxsdk/sdk_libs"
+# # Install Occlum Rust toolchain
+# COPY toolchains/rust /tmp/rust
+# WORKDIR /tmp
+# RUN cd rust && ./build.sh && rm -rf /tmp/rust
+# ENV PATH="/opt/occlum/toolchains/rust/bin:$PATH"
+# ENV LD_LIBRARY_PATH="$LD_LIBRARY_PATH:/opt/intel/sgxsdk/sdk_libs"
 
-# Install Occlum Java toolchain (JDK 11)
-ARG JDK11_PATH=/opt/occlum/toolchains/jvm/java-11-openjdk
-COPY --from=alpine /usr/lib/jvm/java-11-openjdk $JDK11_PATH
-RUN rm $JDK11_PATH/lib/security/cacerts
-COPY --from=alpine /etc/ssl/certs/java/cacerts $JDK11_PATH/lib/security/cacerts
-COPY toolchains/java /tmp/java
-WORKDIR /tmp
-RUN cd java && ./install_dragonwell.sh && rm -rf /tmp/java
-ENV PATH="/opt/occlum/toolchains/jvm/bin:$PATH"
+# # Install Occlum Java toolchain (JDK 11)
+# ARG JDK11_PATH=/opt/occlum/toolchains/jvm/java-11-openjdk
+# COPY --from=alpine /usr/lib/jvm/java-11-openjdk $JDK11_PATH
+# RUN rm $JDK11_PATH/lib/security/cacerts
+# COPY --from=alpine /etc/ssl/certs/java/cacerts $JDK11_PATH/lib/security/cacerts
+# COPY toolchains/java /tmp/java
+# WORKDIR /tmp
+# RUN cd java && ./install_dragonwell.sh && rm -rf /tmp/java
+# ENV PATH="/opt/occlum/toolchains/jvm/bin:$PATH"
 
 # Install the latest version of Occlum
 ARG OCCLUM_BRANCH
