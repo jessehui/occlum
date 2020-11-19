@@ -3,6 +3,7 @@ use std::ops::{Deref, DerefMut};
 use super::vm_perms::VMPerms;
 use super::vm_range::VMRange;
 use super::*;
+use std::pin::Pin;
 
 #[derive(Clone, Debug, Default)]
 pub struct VMArea {
@@ -55,12 +56,13 @@ impl VMArea {
         self.perms = new_perms;
     }
 
-    pub fn subtract(&self, other: &VMRange) -> Vec<VMArea> {
+    pub fn subtract(&self, other: &VMRange) -> Vec<Pin<Box<VMArea>>> {
         self.deref()
             .subtract(other)
             .into_iter()
             .map(|range| Self::inherits_file_from(self, range, self.perms()))
-            .collect()
+            .map(|vma| Box::pin(vma))
+            .collect::<Vec<Pin<Box<VMArea>>>>()
     }
 
     // Returns an non-empty intersection if where is any

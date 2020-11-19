@@ -10,6 +10,7 @@ use std::thread;
 use std::time::Duration;
 use crate::time::timespec_t;
 use crate::libc::{pthread_t, pthread_attr_t};
+use std::pin::Pin;
 
 #[derive(Clone, Debug)]
 pub enum VMInitializer {
@@ -262,8 +263,8 @@ impl VMRemapOptions {
 #[derive(Debug, Default)]
 pub struct VMManager {
     range: VMRange,
-    vmas: SgxMutex<Vec<VMArea>>,
-    dirty: SgxMutex<VecDeque<&VMArea>>,
+    vmas: SgxMutex<Vec<Pin<Box<VMArea>>>>,
+    dirty: SgxMutex<VecDeque<Pin<Box<VMArea>>>>,
     spin_lock: SpinLock,
 }
 
@@ -297,7 +298,7 @@ impl VMManager {
                 let perms = VMPerms::empty();
                 VMArea::new(range, perms, None)
             };
-            SgxMutex::new(vec![start_sentry, end_sentry])
+            SgxMutex::new(vec![Box::pin(start_sentry), Box::pin(end_sentry)])
         };
         let dirty = SgxMutex::new(VecDeque::new());
         let spin_lock = SpinLock::default();
@@ -342,7 +343,7 @@ impl VMManager {
         }
         trace!("Mmap: new_vma = {:?}, idx = {}", new_vma, insert_idx);
         // After initializing, we can safely insert the new VMA
-        self.insert_new_vma(insert_idx, new_vma);
+        self.insert_new_vma(insert_idx, Box::pin(new_vma));
         trace!("after mmap: vmas = {:?}\n", self.vmas.lock().unwrap());
         unsafe {
             self.spin_lock.0.unlock();
@@ -400,6 +401,7 @@ impl VMManager {
         let mut idx:usize = 0;
         let mut flag = 0;
         let mut insert_block_idx:usize = 0;
+        //println!("vmas = {:?}", old_vmas);
         let new_vmas = old_vmas
             .into_iter()
             .filter(|vma| !vma.perms().is_cleaned())
@@ -434,14 +436,14 @@ impl VMManager {
         *self.vmas.lock().unwrap() = new_vmas;
         trace!("after unmmap: vmas = {:?}\n", self.vmas.lock().unwrap());
         // insert a new vma to block mmap from this range which will be memset by bgthread
-        let block_vma_for_memset = VMArea::new(munmap_range, VMPerms::block(), None);
+        let block_vma_for_memset = Box::pin(VMArea::new(munmap_range, VMPerms::block(), None));
         // if munmap a right part of a range, when inserting block vma, the idx should be plus 1.
         if munmap_range.start == self.vmas.lock().unwrap()[insert_block_idx].end {
             insert_block_idx += 1;
         }
         //println!("idx = {}, insert_block_idx = {}", idx, insert_block_idx);
-        self.insert_new_vma(insert_block_idx, block_vma_for_memset);
-        self.dirty.lock().unwrap().push_back(&block_vma_for_memset);
+        self.insert_new_vma(insert_block_idx, block_vma_for_memset.clone());
+        self.dirty.lock().unwrap().push_back(block_vma_for_memset);
         trace!("after insert block vma: vmas = {:?}\n",self.vmas.lock().unwrap());
 
         unsafe {
@@ -452,6 +454,7 @@ impl VMManager {
     }
 
     pub fn update_munmap_range(&self) -> Result<()> {
+        println!("update munmap range");
         let mut working = true;
         while working {
             let mut dirty_queue = self.dirty.lock().unwrap();
@@ -459,24 +462,28 @@ impl VMManager {
                 if dirty_queue.len() == 1 {
                     working = false;
                 }
-                let dirty_vma = dirty_queue.pop_front().unwrap();
-                let munmap_range = &dirty_vma.range();
+                let mut dirty_vma:Pin<Box<VMArea>> = dirty_queue.pop_front().unwrap();
+                let mut dirty_vma_pin:Pin<&mut _> = dirty_vma.as_mut();
+                let munmap_range = dirty_vma_pin.range();
+                println!("dirty_vma before clean = {:?}",dirty_vma_pin);
                 drop(dirty_queue);
                 //println!("clean munmap range = {:?}", munmap_range_with_lock);
                 unsafe{
                     munmap_range.clean()?;
-                    dirty_vma.set_perms(VMPerms::CLEANED);
-                    self.spin_lock.0.lock();
+                    dirty_vma_pin.set_perms(VMPerms::CLEANED);
+                    println!("dirty_vma after clean = {:?}",dirty_vma_pin);
                 }
                 // let (start_idx, end_idx) = self.find_vma_idxs_of_a_range(&munmap_range).unwrap();
-                // println!("bgthread before remove vmas:{:?}\n", self.vmas.lock().unwrap());
-                // println!("bgthread removed idx = {}", start_idx);
+                println!("bgthread after clean. vmas:{:?}\n", self.vmas.lock().unwrap());
                 //self.vmas.lock().unwrap().remove(start_idx);
                 unsafe {
                     self.spin_lock.0.unlock();
                 }
             }
             if !unsafe{RUNNING} {
+                unsafe {
+                    self.spin_lock.0.unlock();
+                }
                 return Ok(());
             }
         }
@@ -641,7 +648,7 @@ impl VMManager {
             (false, true) => {
                 containing_vma.set_end(protect_range.start());
 
-                let new_vma = VMArea::inherits_file_from(containing_vma, protect_range, new_perms);
+                let new_vma = Box::pin(VMArea::inherits_file_from(containing_vma, protect_range, new_perms));
                 Self::apply_perms(&new_vma, new_vma.perms());
                 drop(vmas);
                 self.insert_new_vma(containing_idx + 1, new_vma);
@@ -649,7 +656,7 @@ impl VMManager {
             (true, false) => {
                 containing_vma.set_start(protect_range.end());
 
-                let new_vma = VMArea::inherits_file_from(containing_vma, protect_range, new_perms);
+                let new_vma = Box::pin(VMArea::inherits_file_from(containing_vma, protect_range, new_perms));
                 Self::apply_perms(&new_vma, new_vma.perms());
                 drop(vmas);
                 self.insert_new_vma(containing_idx, new_vma);
@@ -678,8 +685,8 @@ impl VMManager {
 
                 drop(containing_vma);
                 drop(vmas);
-                self.insert_new_vma(containing_idx + 1, new_vma);
-                self.insert_new_vma(containing_idx + 2, new_vma2);
+                self.insert_new_vma(containing_idx + 1, Box::pin(new_vma));
+                self.insert_new_vma(containing_idx + 2, Box::pin(new_vma2));
             }
         }
 
@@ -874,7 +881,7 @@ impl VMManager {
     }
 
     // Insert a new VMA, and when possible, merge it with its neighbors.
-    fn insert_new_vma(&self, insert_idx: usize, new_vma: VMArea) {
+    fn insert_new_vma(&self, insert_idx: usize, new_vma: Pin<Box<VMArea>>) {
         let vmas = &mut self.vmas.lock().unwrap();
         // New VMA can only be inserted between the two sentry VMAs
         debug_assert!(0 < insert_idx && insert_idx < vmas.len());
@@ -936,7 +943,7 @@ impl VMManager {
 
         match (left_mergable, right_mergable) {
             (false, false) => {
-                vmas.insert(insert_idx, new_vma);
+                vmas.insert(insert_idx, Box::pin(new_vma));
             }
             (true, false) => {
                 vmas[left_idx].set_end(new_vma.end);
@@ -987,7 +994,7 @@ impl VMManager {
         }
     }
 
-    fn apply_perms(protect_range: &VMRange, perms: VMPerms) {
+    fn apply_perms(protect_vma: &VMArea, perms: VMPerms) {
         extern "C" {
             pub fn occlum_ocall_mprotect(
                 retval: *mut i32,
@@ -999,8 +1006,8 @@ impl VMManager {
 
         unsafe {
             let mut retval = 0;
-            let addr = protect_range.start() as *const c_void;
-            let len = protect_range.size();
+            let addr = protect_vma.range().start() as *const c_void;
+            let len = protect_vma.range().size();
             let prot = perms.bits() as i32;
             let sgx_status = occlum_ocall_mprotect(&mut retval, addr, len, prot);
             assert!(sgx_status == sgx_status_t::SGX_SUCCESS && retval == 0);
