@@ -260,10 +260,10 @@ impl VMRemapOptions {
 /// ```
 ///
 #[derive(Debug, Default)]
-pub struct VMManager {
+pub struct VMManager<'a> {
     range: VMRange,
     vmas: SgxMutex<Vec<VMArea>>,
-    dirty: SgxMutex<VecDeque<VMRange>>,
+    dirty: SgxMutex<VecDeque<&'a VMArea>>,
     spin_lock: SpinLock,
 }
 
@@ -281,8 +281,8 @@ impl Default for SpinLock {
     }
 }
 
-impl VMManager {
-    pub fn from(addr: usize, size: usize) -> Result<VMManager> {
+impl<'a> VMManager<'a> {
+    pub fn from(addr: usize, size: usize) -> Result<VMManager<'a>> {
         let range = VMRange::new(addr, addr + size)?;
         let vmas = {
             let start = range.start();
@@ -383,12 +383,12 @@ impl VMManager {
             self.spin_lock.0.lock();
         }
         // self.block_range(munmap_range);
-        let ret = self.find_vma_idxs_of_a_range(&munmap_range);
-        if ret.is_none(){
-            return Ok(());
-        }
-        let (mut start_idx, end_idx) = ret.unwrap();
-        trace!("Unmap range = {:?}, corresponding start_idx = {:?}, end_idx = {:?}", munmap_range, start_idx, end_idx);
+        // let ret = self.find_vma_idxs_of_a_range(&munmap_range);
+        // if ret.is_none(){
+        //     return Ok(());
+        // }
+        // let (mut start_idx, end_idx) = ret.unwrap();
+        // trace!("Unmap range = {:?}, corresponding start_idx = {:?}, end_idx = {:?}", munmap_range, start_idx, end_idx);
 
         let old_vmas = {
             let mut old_vmas = Vec::new();
@@ -397,10 +397,15 @@ impl VMManager {
             old_vmas
             //self.vmas.lock().unwrap().clone()
         };
+        let mut idx:usize = 0;
+        let mut flag = 0;
+        let mut insert_block_idx:usize = 0;
         let new_vmas = old_vmas
             .into_iter()
+            .filter(|vma| !vma.perms().is_cleaned())
             .flat_map(|vma| {
                 // Keep the two sentry VMA intact
+                idx += 1;
                 if vma.size() == 0 {
                     return vec![vma];
                 }
@@ -418,6 +423,11 @@ impl VMManager {
                     Self::apply_perms(&intersection_vma, VMPerms::default());
                 }
 
+                if flag == 0 {
+                    insert_block_idx = idx - 1;
+                    flag = 1;
+                }
+
                 vma.subtract(&intersection_vma)
             })
             .collect();
@@ -426,11 +436,12 @@ impl VMManager {
         // insert a new vma to block mmap from this range which will be memset by bgthread
         let block_vma_for_memset = VMArea::new(munmap_range, VMPerms::block(), None);
         // if munmap a right part of a range, when inserting block vma, the idx should be plus 1.
-        if munmap_range.start == self.vmas.lock().unwrap()[start_idx].end {
-            start_idx += 1;
+        if munmap_range.start == self.vmas.lock().unwrap()[insert_block_idx].end {
+            insert_block_idx += 1;
         }
-        self.insert_new_vma(start_idx, block_vma_for_memset);
-        self.dirty.lock().unwrap().push_back(munmap_range);
+        //println!("idx = {}, insert_block_idx = {}", idx, insert_block_idx);
+        self.insert_new_vma(insert_block_idx, block_vma_for_memset);
+        self.dirty.lock().unwrap().push_back(&block_vma_for_memset);
         trace!("after insert block vma: vmas = {:?}\n",self.vmas.lock().unwrap());
 
         unsafe {
@@ -448,17 +459,19 @@ impl VMManager {
                 if dirty_queue.len() == 1 {
                     working = false;
                 }
-                let munmap_range = dirty_queue.pop_front().unwrap();
+                let dirty_vma = dirty_queue.pop_front().unwrap();
+                let munmap_range = &dirty_vma.range();
                 drop(dirty_queue);
                 //println!("clean munmap range = {:?}", munmap_range_with_lock);
                 unsafe{
                     munmap_range.clean()?;
+                    dirty_vma.set_perms(VMPerms::CLEANED);
                     self.spin_lock.0.lock();
                 }
-                let (start_idx, end_idx) = self.find_vma_idxs_of_a_range(&munmap_range).unwrap();
+                // let (start_idx, end_idx) = self.find_vma_idxs_of_a_range(&munmap_range).unwrap();
                 // println!("bgthread before remove vmas:{:?}\n", self.vmas.lock().unwrap());
                 // println!("bgthread removed idx = {}", start_idx);
-                self.vmas.lock().unwrap().remove(start_idx);
+                //self.vmas.lock().unwrap().remove(start_idx);
                 unsafe {
                     self.spin_lock.0.unlock();
                 }
@@ -995,7 +1008,7 @@ impl VMManager {
     }
 }
 
-impl Drop for VMManager {
+impl<'a> Drop for VMManager<'a> {
     fn drop(&mut self) {
         // Ensure that memory permissions are recovered
         for vma in self.vmas.lock().unwrap().iter() {

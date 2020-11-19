@@ -8,7 +8,7 @@ use crate::vm::{ProcessVM, ProcessVMBuilder};
 pub fn do_init<'a, 'b>(
     elf_file: &'b ElfFile<'a>,
     ldso_elf_file: &'b ElfFile<'a>,
-) -> Result<ProcessVM> {
+) -> Result<ProcessVM<'b>> {
     let mut process_vm = if current!().process().pid() == 0 {
         // Parent process is idle process and we can skip checking rlimit because main
         // process will directly use memory configuration in Occlum.json
