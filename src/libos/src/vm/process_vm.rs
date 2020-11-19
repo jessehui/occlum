@@ -42,7 +42,7 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
         self
     }
 
-    pub fn build(self) -> Result<ProcessVM<'a>> {
+    pub fn build(self) -> Result<ProcessVM> {
         self.validate()?;
 
         let heap_size = self
@@ -200,8 +200,8 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
 
 /// The per-process virtual memory
 #[derive(Debug)]
-pub struct ProcessVM<'a> {
-    mmap_manager: VMManager<'a>,
+pub struct ProcessVM {
+    mmap_manager: VMManager,
     elf_ranges: Vec<VMRange>,
     heap_range: VMRange,
     stack_range: VMRange,
@@ -215,8 +215,8 @@ pub struct ProcessVM<'a> {
     process_range: UserSpaceVMRange,
 }
 
-impl<'a> Default for ProcessVM<'a> {
-    fn default() -> ProcessVM<'a> {
+impl Default for ProcessVM {
+    fn default() -> ProcessVM {
         ProcessVM {
             process_range: USER_SPACE_VM_MANAGER.alloc_dummy(),
             elf_ranges: Default::default(),
@@ -228,7 +228,7 @@ impl<'a> Default for ProcessVM<'a> {
     }
 }
 
-impl<'a> ProcessVM<'a> {
+impl ProcessVM {
     pub fn get_process_range(&self) -> &VMRange {
         self.process_range.range()
     }
@@ -261,7 +261,7 @@ impl<'a> ProcessVM<'a> {
         self.brk.load(Ordering::SeqCst)
     }
 
-    pub fn get_mmap_manager(&self) -> &VMManager<'a> {
+    pub fn get_mmap_manager(&self) -> &VMManager {
         &self.mmap_manager
     }
 

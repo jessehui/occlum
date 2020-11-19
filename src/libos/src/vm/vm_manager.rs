@@ -260,10 +260,10 @@ impl VMRemapOptions {
 /// ```
 ///
 #[derive(Debug, Default)]
-pub struct VMManager<'a> {
+pub struct VMManager {
     range: VMRange,
     vmas: SgxMutex<Vec<VMArea>>,
-    dirty: SgxMutex<VecDeque<&'a VMArea>>,
+    dirty: SgxMutex<VecDeque<&VMArea>>,
     spin_lock: SpinLock,
 }
 
@@ -281,8 +281,8 @@ impl Default for SpinLock {
     }
 }
 
-impl<'a> VMManager<'a> {
-    pub fn from(addr: usize, size: usize) -> Result<VMManager<'a>> {
+impl VMManager {
+    pub fn from(addr: usize, size: usize) -> Result<VMManager> {
         let range = VMRange::new(addr, addr + size)?;
         let vmas = {
             let start = range.start();
@@ -1008,7 +1008,7 @@ impl<'a> VMManager<'a> {
     }
 }
 
-impl<'a> Drop for VMManager<'a> {
+impl Drop for VMManager {
     fn drop(&mut self) {
         // Ensure that memory permissions are recovered
         for vma in self.vmas.lock().unwrap().iter() {
