@@ -263,10 +263,12 @@ impl VMRemapOptions {
 #[derive(Debug, Default)]
 pub struct VMManager {
     range: VMRange,
-    vmas: SgxMutex<Vec<Pin<Box<VMArea>>>>,
-    dirty: SgxMutex<VecDeque<Pin<Box<VMArea>>>>,
+    vmas: SgxMutex<Vec<Arc<VMArea>>>,
+    dirty: SgxMutex<VecDeque<Arc<VMArea>>>,
     spin_lock: SpinLock,
 }
+
+//pub type VMARef = Arc<VMArea>;
 
 struct SpinLock(SgxThreadSpinlock);
 
@@ -298,7 +300,7 @@ impl VMManager {
                 let perms = VMPerms::empty();
                 VMArea::new(range, perms, None)
             };
-            SgxMutex::new(vec![Box::pin(start_sentry), Box::pin(end_sentry)])
+            SgxMutex::new(vec![Arc::new(start_sentry), Arc::new(end_sentry)])
         };
         let dirty = SgxMutex::new(VecDeque::new());
         let spin_lock = SpinLock::default();
@@ -343,7 +345,7 @@ impl VMManager {
         }
         trace!("Mmap: new_vma = {:?}, idx = {}", new_vma, insert_idx);
         // After initializing, we can safely insert the new VMA
-        self.insert_new_vma(insert_idx, Box::pin(new_vma));
+        self.insert_new_vma(insert_idx, Arc::new(new_vma));
         trace!("after mmap: vmas = {:?}\n", self.vmas.lock().unwrap());
         unsafe {
             self.spin_lock.0.unlock();
@@ -430,21 +432,27 @@ impl VMManager {
                     flag = 1;
                 }
 
-                vma.subtract(&intersection_vma)
+                vma.subtract(&intersection_vma.range())
             })
             .collect();
         *self.vmas.lock().unwrap() = new_vmas;
-        trace!("after unmmap: vmas = {:?}\n", self.vmas.lock().unwrap());
+        //trace!("1.after unmmap: vmas = {:?}\n", self.vmas.lock().unwrap());
         // insert a new vma to block mmap from this range which will be memset by bgthread
-        let block_vma_for_memset = Box::pin(VMArea::new(munmap_range, VMPerms::block(), None));
+        let mut block_vma_for_memset = Arc::new(VMArea::new(munmap_range, VMPerms::block(), None));
         // if munmap a right part of a range, when inserting block vma, the idx should be plus 1.
-        if munmap_range.start == self.vmas.lock().unwrap()[insert_block_idx].end {
+        if munmap_range.start == self.vmas.lock().unwrap()[insert_block_idx].end() {
             insert_block_idx += 1;
         }
         //println!("idx = {}, insert_block_idx = {}", idx, insert_block_idx);
         self.insert_new_vma(insert_block_idx, block_vma_for_memset.clone());
+        // println!("1.after insert block vma: vmas = {:?}\n",self.vmas.lock().unwrap());
+        // {
+        //     println!("1. insert block vma adress in vec: {:p}", self.vmas.lock().unwrap()[insert_block_idx]);
+        // }
+        //let mut block_vma_for_memset_ptr = &mut self.vmas.lock().unwrap()[insert_block_idx] as &mut VMArea as *mut VMArea;
+        //let block_vma_for_memset_ptr = &mut block_vma ;
+        //println!("1.block_vma_for_memset address = {:p}, {:?}", block_vma_for_memset, block_vma_for_memset);
         self.dirty.lock().unwrap().push_back(block_vma_for_memset);
-        trace!("after insert block vma: vmas = {:?}\n",self.vmas.lock().unwrap());
 
         unsafe {
             self.spin_lock.0.unlock();
@@ -454,7 +462,7 @@ impl VMManager {
     }
 
     pub fn update_munmap_range(&self) -> Result<()> {
-        println!("update munmap range");
+        //println!("0.update munmap range");
         let mut working = true;
         while working {
             let mut dirty_queue = self.dirty.lock().unwrap();
@@ -462,19 +470,21 @@ impl VMManager {
                 if dirty_queue.len() == 1 {
                     working = false;
                 }
-                let mut dirty_vma:Pin<Box<VMArea>> = dirty_queue.pop_front().unwrap();
-                let mut dirty_vma_pin:Pin<&mut _> = dirty_vma.as_mut();
-                let munmap_range = dirty_vma_pin.range();
-                println!("dirty_vma before clean = {:?}",dirty_vma_pin);
+                let dirty_vma: Arc<VMArea> = dirty_queue.pop_front().unwrap();
+                let munmap_range = dirty_vma.range();
+                //println!("0.dirty_vma before clean = {:?}, {:?}",dirty_vma, unsafe{&(*dirty_vma)} );
                 drop(dirty_queue);
-                //println!("clean munmap range = {:?}", munmap_range_with_lock);
+                //println!("0.clean munmap range = {:?}", munmap_range);
+
+                munmap_range.clean()?;
                 unsafe{
-                    munmap_range.clean()?;
-                    dirty_vma_pin.set_perms(VMPerms::CLEANED);
-                    println!("dirty_vma after clean = {:?}",dirty_vma_pin);
+                    self.spin_lock.0.lock();
+                    //println!("0.bgthread before clean. vmas:{:?}\n", self.vmas.lock().unwrap());
+                    dirty_vma.set_perms(VMPerms::CLEANED);
+                    //println!("0.dirty_vma after clean =  {:?}",dirty_vma);
                 }
                 // let (start_idx, end_idx) = self.find_vma_idxs_of_a_range(&munmap_range).unwrap();
-                println!("bgthread after clean. vmas:{:?}\n", self.vmas.lock().unwrap());
+                //println!("0.bgthread after clean. vmas:{:?}\n", self.vmas.lock().unwrap());
                 //self.vmas.lock().unwrap().remove(start_idx);
                 unsafe {
                     self.spin_lock.0.unlock();
@@ -648,18 +658,18 @@ impl VMManager {
             (false, true) => {
                 containing_vma.set_end(protect_range.start());
 
-                let new_vma = Box::pin(VMArea::inherits_file_from(containing_vma, protect_range, new_perms));
+                let new_vma = VMArea::inherits_file_from(containing_vma, protect_range, new_perms);
                 Self::apply_perms(&new_vma, new_vma.perms());
                 drop(vmas);
-                self.insert_new_vma(containing_idx + 1, new_vma);
+                self.insert_new_vma(containing_idx + 1, Arc::new(new_vma));
             }
             (true, false) => {
                 containing_vma.set_start(protect_range.end());
 
-                let new_vma = Box::pin(VMArea::inherits_file_from(containing_vma, protect_range, new_perms));
+                let new_vma = VMArea::inherits_file_from(containing_vma, protect_range, new_perms);
                 Self::apply_perms(&new_vma, new_vma.perms());
                 drop(vmas);
-                self.insert_new_vma(containing_idx, new_vma);
+                self.insert_new_vma(containing_idx, Arc::new(new_vma));
             }
             (false, false) => {
                 // The containing VMA is divided into three VMAs:
@@ -685,8 +695,8 @@ impl VMManager {
 
                 drop(containing_vma);
                 drop(vmas);
-                self.insert_new_vma(containing_idx + 1, Box::pin(new_vma));
-                self.insert_new_vma(containing_idx + 2, Box::pin(new_vma2));
+                self.insert_new_vma(containing_idx + 1, Arc::new(new_vma));
+                self.insert_new_vma(containing_idx + 2, Arc::new(new_vma2));
             }
         }
 
@@ -728,7 +738,8 @@ impl VMManager {
 
     /// Same as flush_vma, except that an extra condition on the file needs to satisfy.
     fn flush_file_vma_with_cond<F: Fn(&FileRef) -> bool>(vma: &VMArea, cond_fn: F) {
-        let (file, file_offset) = match vma.writeback_file().as_ref() {
+        let ret = vma.writeback_file();
+        let (file, file_offset) = match ret.as_ref() {
             None => return,
             Some((file_and_offset)) => file_and_offset,
         };
@@ -742,7 +753,7 @@ impl VMManager {
         if !cond_fn(file) {
             return;
         }
-        file.write_at(*file_offset, unsafe { vma.as_slice() });
+        file.write_at(*file_offset, unsafe { vma.range().as_slice() });
     }
 
     pub fn find_mmap_region(&self, addr: usize) -> Result<VMRange> {
@@ -758,7 +769,7 @@ impl VMManager {
     fn find_containing_vma_idx(&self, target_range: &VMRange) -> Option<usize> {
         self.vmas.lock().unwrap()
             .iter()
-            .position(|vma| vma.is_superset_of(target_range))
+            .position(|vma| vma.range().is_superset_of(target_range))
     }
 
     fn find_vma_idxs_of_a_range(&self, range: &VMRange) -> Option<(usize, usize)> {
@@ -786,7 +797,7 @@ impl VMManager {
             && self
                 .vmas.lock().unwrap()
                 .iter()
-                .all(|range| range.overlap_with(request_range) == false)
+                .all(|vma| vma.range().overlap_with(request_range) == false)
     }
 
     // Find the free range that satisfies the constraints of size and address
@@ -881,7 +892,7 @@ impl VMManager {
     }
 
     // Insert a new VMA, and when possible, merge it with its neighbors.
-    fn insert_new_vma(&self, insert_idx: usize, new_vma: Pin<Box<VMArea>>) {
+    fn insert_new_vma(&self, insert_idx: usize, new_vma: Arc<VMArea>) {
         let vmas = &mut self.vmas.lock().unwrap();
         // New VMA can only be inserted between the two sentry VMAs
         debug_assert!(0 < insert_idx && insert_idx < vmas.len());
@@ -907,10 +918,10 @@ impl VMManager {
                 vmas.insert(insert_idx, new_vma);
             }
             (true, false) => {
-                vmas[left_idx].set_end(new_vma.end);
+                vmas[left_idx].set_end(new_vma.end());
             }
             (false, true) => {
-                vmas[right_idx].set_start(new_vma.start);
+                vmas[right_idx].set_start(new_vma.start());
             }
             (true, true) => {
                 let left_new_end = vmas[right_idx].end();
@@ -943,13 +954,13 @@ impl VMManager {
 
         match (left_mergable, right_mergable) {
             (false, false) => {
-                vmas.insert(insert_idx, Box::pin(new_vma));
+                vmas.insert(insert_idx, Arc::new(new_vma));
             }
             (true, false) => {
-                vmas[left_idx].set_end(new_vma.end);
+                vmas[left_idx].set_end(new_vma.end());
             }
             (false, true) => {
-                vmas[right_idx].set_start(new_vma.start);
+                vmas[right_idx].set_start(new_vma.start());
             }
             (true, true) => {
                 let left_new_end = vmas[right_idx].end();

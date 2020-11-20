@@ -152,9 +152,10 @@ impl VMRange {
         let buf_size = self.size() as usize;
         std::slice::from_raw_parts_mut(buf_ptr, buf_size)
     }
-    
-    pub unsafe fn clean(&self) -> Result<()> {
-        let buf = self.as_slice_mut();
+
+    pub fn clean(&self) -> Result<()> {
+        //println!("0.start clean range = {:?}", self);
+        let buf = unsafe{self.as_slice_mut()};
         buf.iter_mut().for_each(|b| *b = 0);
         Ok(())
     }
