@@ -333,7 +333,14 @@ impl VMManager {
         let new_addr = new_range.start();
         let writeback_file = options.writeback_file.take();
         let new_vma = VMArea::new(new_range, *options.perms(), writeback_file);
-
+        trace!("Mmap: new_vma = {:?}, idx = {}", new_vma, insert_idx);
+        // After initializing, we can safely insert the new VMA
+        self.insert_new_vma(insert_idx, Arc::new(new_vma));
+        trace!("after mmap: vmas = {:?}\n", self.vmas.lock().unwrap());
+        let new_vma = &self.vmas.lock().unwrap()[insert_idx];
+        unsafe {
+            self.spin_lock.0.unlock();
+        }
         // Initialize the memory of the new range
         unsafe {
             let buf = new_vma.as_slice_mut();
@@ -343,13 +350,7 @@ impl VMManager {
         if options.perms.can_execute() {
             Self::apply_perms(&new_vma, new_vma.perms());
         }
-        trace!("Mmap: new_vma = {:?}, idx = {}", new_vma, insert_idx);
-        // After initializing, we can safely insert the new VMA
-        self.insert_new_vma(insert_idx, Arc::new(new_vma));
-        trace!("after mmap: vmas = {:?}\n", self.vmas.lock().unwrap());
-        unsafe {
-            self.spin_lock.0.unlock();
-        }
+
         Ok(new_addr)
     }
 
@@ -477,23 +478,23 @@ impl VMManager {
                 //println!("0.clean munmap range = {:?}", munmap_range);
 
                 munmap_range.clean()?;
-                unsafe{
-                    self.spin_lock.0.lock();
+                // unsafe{
+                //     self.spin_lock.0.lock();
                     //println!("0.bgthread before clean. vmas:{:?}\n", self.vmas.lock().unwrap());
                     dirty_vma.set_perms(VMPerms::CLEANED);
                     //println!("0.dirty_vma after clean =  {:?}",dirty_vma);
-                }
+                //}
                 // let (start_idx, end_idx) = self.find_vma_idxs_of_a_range(&munmap_range).unwrap();
                 //println!("0.bgthread after clean. vmas:{:?}\n", self.vmas.lock().unwrap());
                 //self.vmas.lock().unwrap().remove(start_idx);
-                unsafe {
-                    self.spin_lock.0.unlock();
-                }
+                // unsafe {
+                //     self.spin_lock.0.unlock();
+                // }
             }
             if !unsafe{RUNNING} {
-                unsafe {
-                    self.spin_lock.0.unlock();
-                }
+                // unsafe {
+                //     self.spin_lock.0.unlock();
+                // }
                 return Ok(());
             }
         }
@@ -1041,6 +1042,9 @@ impl Drop for VMManager {
 pub extern "C" fn mem_worker_thread_start(main: *mut libc::c_void) -> *mut libc::c_void {
     while unsafe{RUNNING} {
         let all_process = get_all_processes();
+        if all_process.len() == 0 {
+            continue;
+        }
         for process in all_process.iter() {
             if let Some(thread) = process.main_thread() {
                 thread.vm().get_mmap_manager().update_munmap_range();

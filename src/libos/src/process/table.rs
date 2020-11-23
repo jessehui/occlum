@@ -6,6 +6,9 @@ pub fn get_process(pid: pid_t) -> Result<ProcessRef> {
 }
 
 pub fn get_all_processes() -> Vec<ProcessRef> {
+    if PROCESS_TABLE.lock().unwrap().len() == 0 {
+        return vec![];
+    }
     PROCESS_TABLE
         .lock()
         .unwrap()
@@ -66,6 +69,10 @@ impl<I: Debug + Clone + Send + Sync> Table<I> {
         Self {
             map: HashMap::with_capacity(capacity),
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.map.len()
     }
 
     pub fn iter(&self) -> std::collections::hash_map::Iter<'_, pid_t, I> {
