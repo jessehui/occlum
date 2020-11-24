@@ -155,7 +155,7 @@ impl VMRange {
 
     pub fn clean(&self) -> Result<()> {
         //println!("0.start clean range = {:?}", self);
-        let buf = unsafe{self.as_slice_mut()};
+        let buf = unsafe { self.as_slice_mut() };
         buf.iter_mut().for_each(|b| *b = 0);
         Ok(())
     }

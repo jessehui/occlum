@@ -4,10 +4,10 @@ use std::intrinsics::atomic_store;
 use super::do_futex::futex_wake;
 use super::process::{Process, ProcessFilter};
 use super::{table, TermStatus, ThreadRef, ThreadStatus};
+use crate::entry::{native, RUNNING};
+use crate::libc::pthread_join;
 use crate::prelude::*;
 use crate::signal::{KernelSignal, SigNum};
-use crate::entry::{RUNNING, native};
-use crate::libc::pthread_join;
 use core::ptr;
 //use crate::vm::native_threads;
 
@@ -93,9 +93,9 @@ fn exit_process(thread: &ThreadRef, term_status: TermStatus) {
 
     // The parent is the idle process
     if parent_inner.is_none() {
-        unsafe{
+        unsafe {
             RUNNING = false;
-//            println!("native = {:?}", native as libc::pthread_t);
+            //            println!("native = {:?}", native as libc::pthread_t);
             pthread_join(native, ptr::null_mut());
         }
         debug_assert!(parent.pid() == 0);

@@ -1,10 +1,10 @@
+use crate::libc::{pthread_attr_t, pthread_t};
+use core::mem;
+use core::ptr;
 use std::ffi::{CStr, CString, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
-use core::mem;
-use core::ptr;
-use crate::libc::{pthread_t, pthread_attr_t};
 
 use super::*;
 use crate::exception::*;
@@ -16,8 +16,8 @@ use crate::time::up_time::init;
 use crate::util::log::LevelFilter;
 use crate::util::mem_util::from_untrusted::*;
 use crate::util::sgx::allow_debug as sgx_allow_debug;
-use sgx_tse::*;
 use crate::vm::mem_worker_thread_start;
+use sgx_tse::*;
 
 pub static mut INSTANCE_DIR: String = String::new();
 static mut ENCLAVE_PATH: String = String::new();

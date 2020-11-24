@@ -388,8 +388,7 @@ impl ProcessVM {
 
     // Return: a copy of the found region
     pub fn find_mmap_region(&self, addr: usize) -> Result<VMRange> {
-        self.mmap_manager
-            .find_mmap_region(addr)
+        self.mmap_manager.find_mmap_region(addr)
     }
 }
 

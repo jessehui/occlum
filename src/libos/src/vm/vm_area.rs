@@ -24,25 +24,33 @@ impl VMArea {
             perms,
             writeback_file,
         });
-        VMArea{ inner: SgxRwLock::new(inner) }
+        VMArea {
+            inner: SgxRwLock::new(inner),
+        }
     }
 
     /// Create a new VMArea object that inherits the write-back file (if any), but has
     /// a new range and permissions.
     pub fn inherits_file_from(vma: &VMArea, new_range: VMRange, new_perms: VMPerms) -> Self {
-        let new_writeback_file = vma.inner.read().unwrap().writeback_file.as_ref().map(|(file, file_offset)| {
-            let new_file = file.clone();
+        let new_writeback_file =
+            vma.inner
+                .read()
+                .unwrap()
+                .writeback_file
+                .as_ref()
+                .map(|(file, file_offset)| {
+                    let new_file = file.clone();
 
-            let new_file_offset = if vma.start() < new_range.start() {
-                let vma_offset = new_range.start() - vma.start();
-                *file_offset + vma_offset
-            } else {
-                let vma_offset = vma.start() - new_range.start();
-                debug_assert!(*file_offset >= vma_offset);
-                *file_offset - vma_offset
-            };
-            (new_file, new_file_offset)
-        });
+                    let new_file_offset = if vma.start() < new_range.start() {
+                        let vma_offset = new_range.start() - vma.start();
+                        *file_offset + vma_offset
+                    } else {
+                        let vma_offset = vma.start() - new_range.start();
+                        debug_assert!(*file_offset >= vma_offset);
+                        *file_offset - vma_offset
+                    };
+                    (new_file, new_file_offset)
+                });
         Self::new(new_range, new_perms, new_writeback_file)
     }
 
@@ -58,15 +66,15 @@ impl VMArea {
         self.inner.read().unwrap().range.clone()
     }
 
-    pub fn start(&self) ->usize {
+    pub fn start(&self) -> usize {
         self.inner.read().unwrap().range.start
     }
 
-    pub fn end(&self) ->usize {
+    pub fn end(&self) -> usize {
         self.inner.read().unwrap().range.end
     }
 
-    pub fn size(&self) ->usize {
+    pub fn size(&self) -> usize {
         self.inner.read().unwrap().range.size()
     }
 

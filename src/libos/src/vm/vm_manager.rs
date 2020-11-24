@@ -2,15 +2,15 @@ use super::*;
 
 use super::vm_area::VMArea;
 use super::vm_perms::VMPerms;
+use crate::libc::{pthread_attr_t, pthread_t};
+use crate::process::table::get_all_processes;
+use crate::time::timespec_t;
 use core::mem;
 use core::ptr;
-use crate::process::table::get_all_processes;
 use sgx_tstd::sync::SgxThreadSpinlock;
+use std::pin::Pin;
 use std::thread;
 use std::time::Duration;
-use crate::time::timespec_t;
-use crate::libc::{pthread_t, pthread_attr_t};
-use std::pin::Pin;
 
 #[derive(Clone, Debug)]
 pub enum VMInitializer {
@@ -263,7 +263,7 @@ impl VMRemapOptions {
 #[derive(Debug, Default)]
 pub struct VMManager {
     range: VMRange,
-    vmas: SgxMutex<Vec<Arc<VMArea>>>,
+    vmas: SgxMutex<VecDeque<Arc<VMArea>>>,
     dirty: SgxMutex<VecDeque<Arc<VMArea>>>,
     spin_lock: SpinLock,
 }
@@ -274,13 +274,13 @@ struct SpinLock(SgxThreadSpinlock);
 
 impl Debug for SpinLock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f,"spin lock")
+        write!(f, "spin lock")
     }
 }
 
 impl Default for SpinLock {
     fn default() -> SpinLock {
-        SpinLock (SgxThreadSpinlock::new())
+        SpinLock(SgxThreadSpinlock::new())
     }
 }
 
@@ -300,11 +300,19 @@ impl VMManager {
                 let perms = VMPerms::empty();
                 VMArea::new(range, perms, None)
             };
-            SgxMutex::new(vec![Arc::new(start_sentry), Arc::new(end_sentry)])
+            let mut vmas = VecDeque::with_capacity(10);
+            vmas.push_back(Arc::new(start_sentry));
+            vmas.push_back(Arc::new(end_sentry));
+            SgxMutex::new(vmas)
         };
         let dirty = SgxMutex::new(VecDeque::new());
         let spin_lock = SpinLock::default();
-        Ok(VMManager { range, vmas, dirty, spin_lock})
+        Ok(VMManager {
+            range,
+            vmas,
+            dirty,
+            spin_lock,
+        })
     }
 
     pub fn range(&self) -> &VMRange {
@@ -333,6 +341,12 @@ impl VMManager {
         let new_addr = new_range.start();
         let writeback_file = options.writeback_file.take();
         let new_vma = VMArea::new(new_range, *options.perms(), writeback_file);
+        // self.insert_new_vma(insert_idx, Arc::new(new_vma));
+        // trace!("after mmap: vmas = {:?}\n", self.vmas.lock().unwrap());
+        // let new_vma = &self.vmas.lock().unwrap()[insert_idx];
+        // unsafe {
+        //     self.spin_lock.0.unlock();
+        // }
 
         // Initialize the memory of the new range
         unsafe {
@@ -346,19 +360,13 @@ impl VMManager {
         trace!("Mmap: new_vma = {:?}, idx = {}", new_vma, insert_idx);
         // After initializing, we can safely insert the new VMA
         self.insert_new_vma(insert_idx, Arc::new(new_vma));
-        trace!("after mmap: vmas = {:?}\n", self.vmas.lock().unwrap());
         unsafe {
             self.spin_lock.0.unlock();
         }
+        trace!("after mmap: vmas = {:?}\n", self.vmas.lock().unwrap());
+
         Ok(new_addr)
     }
-
-    // fn block_range(&self, range: VMRange) -> Result<()> {
-    //     let (start_idx, end_idx) = find_vma_idxs_of_a_range(range)?;
-    //     self.vmas.lock().unwrap().drain(start_idx..end_idx);
-    //     let blocking_vma = VMArea::new(range, )
-    //     insert_new_vma(start_idx, )
-    // }
 
     pub fn munmap(&self, addr: usize, size: usize) -> Result<()> {
         let size = {
@@ -394,15 +402,15 @@ impl VMManager {
         // trace!("Unmap range = {:?}, corresponding start_idx = {:?}, end_idx = {:?}", munmap_range, start_idx, end_idx);
 
         let old_vmas = {
-            let mut old_vmas = Vec::new();
+            let mut old_vmas = VecDeque::new();
             let mut current = self.vmas.lock().unwrap();
             std::mem::swap(&mut *current, &mut old_vmas);
             old_vmas
             //self.vmas.lock().unwrap().clone()
         };
-        let mut idx:usize = 0;
+        let mut idx: usize = 0;
         let mut flag = 0;
-        let mut insert_block_idx:usize = 0;
+        let mut insert_block_idx: usize = 0;
         //println!("vmas = {:?}", old_vmas);
         let new_vmas = old_vmas
             .into_iter()
@@ -477,7 +485,7 @@ impl VMManager {
                 //println!("0.clean munmap range = {:?}", munmap_range);
 
                 munmap_range.clean()?;
-                unsafe{
+                unsafe {
                     self.spin_lock.0.lock();
                     //println!("0.bgthread before clean. vmas:{:?}\n", self.vmas.lock().unwrap());
                     dirty_vma.set_perms(VMPerms::CLEANED);
@@ -490,7 +498,7 @@ impl VMManager {
                     self.spin_lock.0.unlock();
                 }
             }
-            if !unsafe{RUNNING} {
+            if !unsafe { RUNNING } {
                 unsafe {
                     self.spin_lock.0.unlock();
                 }
@@ -757,17 +765,23 @@ impl VMManager {
     }
 
     pub fn find_mmap_region(&self, addr: usize) -> Result<VMRange> {
-        let region = self.vmas.lock().unwrap()
+        let region = self
+            .vmas
+            .lock()
+            .unwrap()
             .iter()
             .map(|vma| vma.range())
             .find(|vma| vma.contains(addr))
-            .ok_or_else(|| errno!(ESRCH, "no mmap regions that contains the address"))?.clone();
+            .ok_or_else(|| errno!(ESRCH, "no mmap regions that contains the address"))?
+            .clone();
         return Ok(region);
     }
 
     // Find a VMA that contains the given range, returning the VMA's index
     fn find_containing_vma_idx(&self, target_range: &VMRange) -> Option<usize> {
-        self.vmas.lock().unwrap()
+        self.vmas
+            .lock()
+            .unwrap()
             .iter()
             .position(|vma| vma.range().is_superset_of(target_range))
     }
@@ -778,7 +792,7 @@ impl VMManager {
         let mut end_idx = None;
         for (idx, vma) in self.vmas.lock().unwrap().iter().enumerate() {
             if vma.range().contains(range.start()) {
-               // trace!("idx = {:?}, vma = {:?}", idx, vma.range());
+                // trace!("idx = {:?}, vma = {:?}", idx, vma.range());
                 start_idx = Some(idx);
             }
             if vma.range().contains(range.end() - 1) {
@@ -795,7 +809,9 @@ impl VMManager {
     fn is_free_range(&self, request_range: &VMRange) -> bool {
         self.range.is_superset_of(request_range)
             && self
-                .vmas.lock().unwrap()
+                .vmas
+                .lock()
+                .unwrap()
                 .iter()
                 .all(|vma| vma.range().overlap_with(request_range) == false)
     }
@@ -808,9 +824,9 @@ impl VMManager {
         // Record the minimal free range that satisfies the contraints
         let mut result_free_range: Option<VMRange> = None;
         let mut result_idx: Option<usize> = None;
-        let vmas = self.vmas.lock().unwrap();
+        let mut vmas = self.vmas.lock().unwrap();
 
-        for (idx, range_pair) in vmas.windows(2).enumerate() {
+        for (idx, range_pair) in vmas.make_contiguous().windows(2).enumerate() {
             // Since we have two sentry vmas at both ends, we can be sure that the free
             // space only appears between two consecutive vmas.
             let pre_range = &range_pair[0];
@@ -1039,7 +1055,7 @@ impl Drop for VMManager {
 }
 
 pub extern "C" fn mem_worker_thread_start(main: *mut libc::c_void) -> *mut libc::c_void {
-    while unsafe{RUNNING} {
+    while unsafe { RUNNING } {
         let all_process = get_all_processes();
         for process in all_process.iter() {
             if let Some(thread) = process.main_thread() {
@@ -1052,11 +1068,12 @@ pub extern "C" fn mem_worker_thread_start(main: *mut libc::c_void) -> *mut libc:
 }
 
 extern "C" {
-    pub fn pthread_create(native: *mut pthread_t,
+    pub fn pthread_create(
+        native: *mut pthread_t,
         attr: *const pthread_attr_t,
         f: extern "C" fn(*mut c_void) -> *mut c_void,
-        value: *mut c_void) -> c_int;
-    pub fn pthread_join(native: pthread_t,
-        value: *mut *mut c_void) -> c_int;
+        value: *mut c_void,
+    ) -> c_int;
+    pub fn pthread_join(native: pthread_t, value: *mut *mut c_void) -> c_int;
     pub fn pthread_exit(value: *mut c_void);
 }

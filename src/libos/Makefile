@@ -107,7 +107,7 @@ $(LIBOS_CORE_A): $(LIBOS_CORE_RS_A) $(C_OBJS) $(CXX_OBJS) $(S_OBJS) $(EDL_C_OBJS
 	@echo "GEN => $@"
 
 ifneq (, $(shell which sccache))
-    RUSTC_WRAPPER := sccache
+    #RUSTC_WRAPPER := sccache
 else
     RUSTC_WRAPPER :=
 endif
