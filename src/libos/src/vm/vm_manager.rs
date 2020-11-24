@@ -451,15 +451,7 @@ impl VMManager {
         if munmap_range.start == self.vmas.lock().unwrap()[insert_block_idx].end() {
             insert_block_idx += 1;
         }
-        //println!("idx = {}, insert_block_idx = {}", idx, insert_block_idx);
         self.insert_new_vma(insert_block_idx, block_vma_for_memset.clone());
-        // println!("1.after insert block vma: vmas = {:?}\n",self.vmas.lock().unwrap());
-        // {
-        //     println!("1. insert block vma adress in vec: {:p}", self.vmas.lock().unwrap()[insert_block_idx]);
-        // }
-        //let mut block_vma_for_memset_ptr = &mut self.vmas.lock().unwrap()[insert_block_idx] as &mut VMArea as *mut VMArea;
-        //let block_vma_for_memset_ptr = &mut block_vma ;
-        //println!("1.block_vma_for_memset address = {:p}, {:?}", block_vma_for_memset, block_vma_for_memset);
         self.dirty.lock().unwrap().push_back(block_vma_for_memset);
 
         unsafe {
@@ -488,12 +480,9 @@ impl VMManager {
                 unsafe {
                     self.spin_lock.0.lock();
                     //println!("0.bgthread before clean. vmas:{:?}\n", self.vmas.lock().unwrap());
-                    dirty_vma.set_perms(VMPerms::CLEANED);
                     //println!("0.dirty_vma after clean =  {:?}",dirty_vma);
                 }
-                // let (start_idx, end_idx) = self.find_vma_idxs_of_a_range(&munmap_range).unwrap();
-                //println!("0.bgthread after clean. vmas:{:?}\n", self.vmas.lock().unwrap());
-                //self.vmas.lock().unwrap().remove(start_idx);
+                dirty_vma.set_perms(VMPerms::CLEANED);
                 unsafe {
                     self.spin_lock.0.unlock();
                 }
@@ -502,6 +491,12 @@ impl VMManager {
                 unsafe {
                     self.spin_lock.0.unlock();
                 }
+                // clean all ranges when exit
+                // let mut dirty_queue = self.dirty.lock().unwrap();
+                // while !dirty_queue.is_empty() {
+                //     let dirty_vma = dirty_queue.pop_front().unwrap();
+                //     dirty_vma.range().clean()?;
+                // }
                 return Ok(());
             }
         }
@@ -1058,7 +1053,7 @@ pub extern "C" fn mem_worker_thread_start(main: *mut libc::c_void) -> *mut libc:
     while unsafe { RUNNING } {
         let all_process = get_all_processes();
         for process in all_process.iter() {
-            if let Some(thread) = process.main_thread() {
+            if let Some(thread) = process.leader_thread() {
                 thread.vm().get_mmap_manager().update_munmap_range();
             }
         }

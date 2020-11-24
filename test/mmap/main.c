@@ -22,7 +22,7 @@
 #define ALIGN_DOWN(x, a)        ((x) & ~(a-1)) // a must be a power of two
 #define ALIGN_UP(x, a)          ALIGN_DOWN((x+(a-1)), (a))
 
-#define MAX_MMAP_USED_MEMORY    (4 * MB)
+#define MAX_MMAP_USED_MEMORY    (80 * MB)
 
 // ============================================================================
 // Helper functions
@@ -144,18 +144,18 @@ int test_anonymous_mmap_randomly() {
     int prot = PROT_READ | PROT_WRITE;
     int flags = MAP_PRIVATE | MAP_ANONYMOUS;
 
-    void *bufs[16] = {NULL};
-    size_t lens[16];
+    void *bufs[5000] = {NULL};
+    size_t lens[5000];
     size_t num_bufs = 0;
     size_t used_memory = 0;
 
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 2; i++) {
         // Phrase 1: do mmap with random sizes until no more buffers or memory
         for (num_bufs = 0;
                 num_bufs < ARRAY_SIZE(bufs) && used_memory < MAX_MMAP_USED_MEMORY;
                 num_bufs++) {
             // Choose the mmap size randomly
-            size_t len = rand() % (MAX_MMAP_USED_MEMORY - used_memory) + 1;
+            size_t len = (rand() % (16 * KB)) + 1;
             len = ALIGN_UP(len, PAGE_SIZE);
 
             // Do mmap
@@ -169,6 +169,7 @@ int test_anonymous_mmap_randomly() {
             // Update memory usage
             used_memory += len;
         }
+        printf("mmap times = %ld\n", num_bufs);
 
         // Phrase 2: do munmap to free all memory mapped memory
         for (int bi = 0; bi < num_bufs; bi++) {
@@ -1066,23 +1067,23 @@ int test_mprotect_with_invalid_prot() {
 // ============================================================================
 
 static test_case_t test_cases[] = {
-    TEST_CASE(test_anonymous_mmap),
+    //TEST_CASE(test_anonymous_mmap),
     TEST_CASE(test_anonymous_mmap_randomly),
     // TEST_CASE(test_anonymous_mmap_randomly_with_good_hints),
     // TEST_CASE(test_anonymous_mmap_with_bad_hints),
-    TEST_CASE(test_anonymous_mmap_with_zero_len),
-    TEST_CASE(test_anonymous_mmap_with_non_page_aligned_len),
-    TEST_CASE(test_private_file_mmap),
-    TEST_CASE(test_private_file_mmap_with_offset),
-    TEST_CASE(test_private_file_mmap_with_invalid_fd),
-    TEST_CASE(test_private_file_mmap_with_non_page_aligned_offset),
-    TEST_CASE(test_shared_file_mmap_flushing_with_msync),
-    TEST_CASE(test_shared_file_mmap_flushing_with_munmap),
-    TEST_CASE(test_shared_file_mmap_flushing_with_fdatasync),
-    TEST_CASE(test_shared_file_mmap_flushing_with_fsync), // flaws
-    TEST_CASE(test_fixed_mmap_that_does_not_override_any_mmaping), // flaws -> fixed
-    TEST_CASE(test_fixed_mmap_that_overrides_existing_mmaping),
-    TEST_CASE(test_fixed_mmap_with_non_page_aligned_addr),
+    // TEST_CASE(test_anonymous_mmap_with_zero_len),
+    // TEST_CASE(test_anonymous_mmap_with_non_page_aligned_len),
+    // TEST_CASE(test_private_file_mmap),
+    // TEST_CASE(test_private_file_mmap_with_offset),
+    // TEST_CASE(test_private_file_mmap_with_invalid_fd),
+    // TEST_CASE(test_private_file_mmap_with_non_page_aligned_offset),
+    // TEST_CASE(test_shared_file_mmap_flushing_with_msync),
+    // TEST_CASE(test_shared_file_mmap_flushing_with_munmap),
+    // TEST_CASE(test_shared_file_mmap_flushing_with_fdatasync),
+    // TEST_CASE(test_shared_file_mmap_flushing_with_fsync), // flaws
+    // TEST_CASE(test_fixed_mmap_that_does_not_override_any_mmaping), // flaws -> fixed
+    // TEST_CASE(test_fixed_mmap_that_overrides_existing_mmaping),
+    // TEST_CASE(test_fixed_mmap_with_non_page_aligned_addr),
     // TEST_CASE(test_munmap_whose_range_is_a_subset_of_a_mmap_region), //flaws
     // TEST_CASE(test_munmap_whose_range_is_a_superset_of_a_mmap_region), // flaws hint
     // TEST_CASE(test_munmap_whose_range_intersects_with_a_mmap_region),
