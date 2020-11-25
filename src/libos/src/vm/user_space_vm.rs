@@ -39,7 +39,10 @@ impl UserSpaceVMManager {
         let perm = MemPerm::READ | MemPerm::WRITE;
         // Change the page permission to RW
         unsafe {
-            assert!(sgx_tprotect_rsrv_mem(ptr as *const c_void, size, perm.bits()) == sgx_status_t::SGX_SUCCESS);
+            assert!(
+                sgx_tprotect_rsrv_mem(ptr as *const c_void, size, perm.bits())
+                    == sgx_status_t::SGX_SUCCESS
+            );
         }
         Ok(())
     }

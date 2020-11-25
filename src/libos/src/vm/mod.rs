@@ -16,9 +16,9 @@ use self::vm_manager::{VMManager, VMMapOptionsBuilder};
 
 pub use self::process_vm::{MMapFlags, MRemapFlags, MSyncFlags, ProcessVM, ProcessVMBuilder};
 pub use self::user_space_vm::USER_SPACE_VM_MANAGER;
+pub use self::vm_manager::mem_worker_thread_start;
 pub use self::vm_perms::VMPerms;
 pub use self::vm_range::VMRange;
-pub use self::vm_manager::mem_worker_thread_start;
 
 pub fn do_mmap(
     addr: usize,

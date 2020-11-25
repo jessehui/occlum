@@ -1,10 +1,10 @@
+use crate::libc::{pthread_attr_t, pthread_t};
+use core::mem;
+use core::ptr;
 use std::ffi::{CStr, CString, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
-use core::mem;
-use core::ptr;
-use crate::libc::{pthread_t, pthread_attr_t};
 
 use super::*;
 use crate::exception::*;
@@ -16,8 +16,8 @@ use crate::time::up_time::init;
 use crate::util::log::LevelFilter;
 use crate::util::mem_util::from_untrusted::*;
 use crate::util::sgx::allow_debug as sgx_allow_debug;
-use sgx_tse::*;
 use crate::vm::mem_worker_thread_start;
+use sgx_tse::*;
 
 pub static mut INSTANCE_DIR: String = String::new();
 static mut ENCLAVE_PATH: String = String::new();
@@ -89,7 +89,7 @@ pub extern "C" fn occlum_ecall_init(log_level: *const c_char, instance_dir: *con
             let attr: libc::pthread_attr_t = mem::zeroed();
             RUNNING = true;
             let ret = libc::pthread_create(&mut native, &attr, mem_worker_thread_start, &mut arg);
-            println!("init native = {:?}", native as libc::pthread_t);
+            //println!("init native = {:?}", native as libc::pthread_t);
         }
 
         HAS_INIT.store(true, Ordering::SeqCst);
@@ -101,12 +101,13 @@ pub extern "C" fn occlum_ecall_init(log_level: *const c_char, instance_dir: *con
 }
 
 extern "C" {
-    fn pthread_create(native: *mut pthread_t,
+    fn pthread_create(
+        native: *mut pthread_t,
         attr: *const pthread_attr_t,
         f: extern "C" fn(*mut c_void) -> *mut c_void,
-        value: *mut c_void) -> c_int;
-    pub fn pthread_join(native: pthread_t,
-        value: *mut *mut c_void) -> c_int;
+        value: *mut c_void,
+    ) -> c_int;
+    pub fn pthread_join(native: pthread_t, value: *mut *mut c_void) -> c_int;
     pub fn pthread_exit(value: *mut c_void);
 }
 
