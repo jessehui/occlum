@@ -155,7 +155,10 @@ impl VMRange {
 
     pub fn clean(&self) -> Result<()> {
         let buf = unsafe { self.as_slice_mut() };
-        buf.iter_mut().for_each(|b| *b = 0);
+        //buf.iter_mut().for_each(|b| *b = 0);
+        for b in &mut buf[..] {
+            *b = 0;
+        }
         Ok(())
     }
 }

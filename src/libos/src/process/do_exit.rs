@@ -94,7 +94,7 @@ fn exit_process(thread: &ThreadRef, term_status: TermStatus) {
     if parent_inner.is_none() {
         unsafe {
             RUNNING = false;
-            println!("native = {:?}", native as libc::pthread_t);
+            //println!("native = {:?}", native as libc::pthread_t);
             pthread_join(native, ptr::null_mut());
         }
         debug_assert!(parent.pid() == 0);
