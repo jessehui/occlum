@@ -24,10 +24,12 @@ static mut ENCLAVE_PATH: String = String::new();
 //static mut native: u64 = 0;
 pub static mut native: libc::pthread_t = 0 as libc::pthread_t;
 pub static mut RUNNING: bool = false;
+//pub static mut DONE: bool = SgxMutex::new(false);
 
 lazy_static! {
     static ref INIT_ONCE: Once = Once::new();
     static ref HAS_INIT: AtomicBool = AtomicBool::new(false);
+    pub static ref DONE: SgxMutex<bool> = SgxMutex::new(false);
 }
 
 macro_rules! ecall_errno {

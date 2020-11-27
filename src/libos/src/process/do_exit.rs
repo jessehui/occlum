@@ -4,7 +4,7 @@ use std::intrinsics::atomic_store;
 use super::do_futex::futex_wake;
 use super::process::{Process, ProcessFilter};
 use super::{table, TermStatus, ThreadRef, ThreadStatus};
-use crate::entry::{native, RUNNING};
+use crate::entry::{native, RUNNING, DONE};
 use crate::libc::pthread_join;
 use crate::prelude::*;
 use crate::signal::{KernelSignal, SigNum};
@@ -87,16 +87,19 @@ fn exit_process(thread: &ThreadRef, term_status: TermStatus) {
         }
         break Some(parent_inner);
     };
+    // The parent is the idle process
+    if parent_inner.is_none() {
+        unsafe {
+            RUNNING = false;
+        }
+        let done = DONE.lock().unwrap();
+        debug_assert!(*done == true);
+    }
     // Lock the current process
     let mut process_inner = process.inner();
 
     // The parent is the idle process
     if parent_inner.is_none() {
-        unsafe {
-            RUNNING = false;
-            //println!("native = {:?}", native as libc::pthread_t);
-            pthread_join(native, ptr::null_mut());
-        }
         debug_assert!(parent.pid() == 0);
 
         let pid = process.pid();

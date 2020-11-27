@@ -2,8 +2,9 @@ use super::*;
 
 use super::vm_area::VMArea;
 use super::vm_perms::VMPerms;
-use crate::entry::RUNNING;
-use crate::process::table::get_all_processes;
+use crate::entry::{RUNNING, DONE};
+use crate::process::table::{ get_all_threads,get_all_processes} ;
+use crate::process::ThreadStatus;
 use crate::time::timespec_t;
 use core::ptr;
 use crossbeam_queue::ArrayQueue;
@@ -327,8 +328,8 @@ impl VMManager {
     }
 
     // Need spin_lock
-    pub fn munmap_dirty_range_by_hand(&self, idx: usize) {
-        let dirty_range = self.dirty.lock().unwrap().swap_remove_back(idx).unwrap();
+    pub fn munmap_dirty_range_by_hand(&self, dirty_queue: &mut VecDeque<VMRange>, idx: usize) {
+        let dirty_range = dirty_queue.swap_remove_back(idx).unwrap();
         let old_vmas = {
             let mut old_vmas = Vec::new();
             let mut current = self.vmas.lock().unwrap();
@@ -343,7 +344,7 @@ impl VMManager {
                     return vec![vma];
                 }
 
-                let intersection_vma = match vma.intersect(&hint_vm_range) {
+                let intersection_vma = match vma.intersect(&dirty_range) {
                     None => return vec![vma],
                     Some(intersection_vma) => intersection_vma,
                 };
@@ -369,16 +370,19 @@ impl VMManager {
 
         if let VMMapAddr::Force(addr) = addr {
             let force_vm_range = unsafe{VMRange::from_unchecked(addr, addr+size)};
+            let mut dirty_queue = self.dirty.lock().unwrap();
             unsafe {
                 self.spin_lock.0.lock();
             }
+            //drop(dirty_queue);
             // First check if the range is in dirty queue
-            if let Some(idx) = self.find_dirty_vm_range_idx(&force_vm_range) {
-                self.munmap_dirty_range_by_hand(idx);
+            if let Some(idx) = Self::find_dirty_vm_range_idx(&dirty_queue, &force_vm_range) {
+                self.munmap_dirty_range_by_hand(&mut dirty_queue, idx);
                 unsafe {
                     self.spin_lock.0.unlock();
                 }
             } else {
+                // The range is not munmapped yet
                 unsafe {
                     self.spin_lock.0.unlock();
                 }
@@ -387,45 +391,17 @@ impl VMManager {
         }
 
         if let VMMapAddr::Hint(addr) = addr {
-            let hint_vm_range = unsafe { VMRange::from_unchecked(addr, addr + size) };
+            let hint_vm_range = unsafe{VMRange::from_unchecked(addr, addr+size)};
+            let mut dirty_queue = self.dirty.lock().unwrap();
             unsafe {
                 self.spin_lock.0.lock();
             }
-            if let Some(idx) = self.find_dirty_vm_range_idx(&hint_vm_range) {
-                println!("1 idx = {}", idx);
-                let dirty_range = self.dirty.lock().unwrap().swap_remove_back(idx).unwrap();
-                let old_vmas = {
-                    let mut old_vmas = Vec::new();
-                    let mut current = self.vmas.lock().unwrap();
-                    std::mem::swap(&mut *current, &mut old_vmas);
-                    old_vmas
-                };
-                let new_vmas = old_vmas
-                    .into_iter()
-                    .flat_map(|vma| {
-                        // Keep the two sentry VMA intact
-                        if vma.size() == 0 {
-                            return vec![vma];
-                        }
-
-                        let intersection_vma = match vma.intersect(&hint_vm_range) {
-                            None => return vec![vma],
-                            Some(intersection_vma) => intersection_vma,
-                        };
-
-                        // File-backed VMA needs to be flushed upon munmap
-                        Self::flush_file_vma(&intersection_vma);
-
-                        // Reset memory permissions
-                        if !&intersection_vma.perms().is_default() {
-                            Self::apply_perms(&intersection_vma, VMPerms::default());
-                        }
-                        intersection_vma.range().clean();
-                        vma.subtract(&intersection_vma)
-                    })
-                    .collect();
-                *self.vmas.lock().unwrap() = new_vmas;
+            //drop(dirty_queue);
+            // Check if the range is in dirty queue
+            if let Some(idx) = Self::find_dirty_vm_range_idx(&dirty_queue, &hint_vm_range) {
+                self.munmap_dirty_range_by_hand(&mut dirty_queue, idx);
             }
+            // If not in dirty queue, the range is in use. Do nothing.
             unsafe {
                 self.spin_lock.0.unlock();
             }
@@ -558,11 +534,11 @@ impl VMManager {
                 if dirty_queue.len() == 1 {
                     working = false;
                 }
-                let munmap_range = dirty_queue.pop_front().unwrap();
-                drop(dirty_queue);
                 unsafe {
                     self.spin_lock.0.lock();
                 }
+                let munmap_range = dirty_queue.pop_front().unwrap();
+                drop(dirty_queue);
                 let old_vmas = {
                     let mut old_vmas = Vec::new();
                     let mut current = self.vmas.lock().unwrap();
@@ -575,10 +551,6 @@ impl VMManager {
                     .flat_map(|vma| {
                         // Keep the two sentry VMA intact
                         if vma.size() == 0 {
-                            return vec![vma];
-                        }
-
-                        if vma.end() < munmap_range.start() || vma.start() > munmap_range.start() {
                             return vec![vma];
                         }
 
@@ -604,57 +576,12 @@ impl VMManager {
                 unsafe {
                     self.spin_lock.0.unlock();
                 }
-                // unsafe{
-                //     munmap_range_with_lock.lock().unwrap().clean()?;
-                // }
             }
-            if !unsafe { RUNNING } {
-                return Ok(());
-            }
+            // if !unsafe { RUNNING } {
+            //     return Ok(());
+            // }
         }
         Ok(())
-
-        // let mut dirty_queue = self.dirty.lock().unwrap();
-        // println!("clean thread dirty queue length = {}", dirty_queue.len());
-        // if !dirty_queue.is_empty() {
-        //     let munmap_range_with_lock = dirty_queue.pop_front().unwrap();
-        //     drop(dirty_queue);
-        //     println!("clean munmap range = {:?}", munmap_range_with_lock);
-        //     unsafe{
-        //         munmap_range_with_lock.lock().unwrap().clean()?;
-        //     }
-        //     let old_vmas = {
-        //         let mut old_vmas = Vec::new();
-        //         let mut current = self.vmas.lock().unwrap();
-        //         std::mem::swap(&mut *current, &mut old_vmas);
-        //         old_vmas
-        //         //self.vmas.lock().unwrap().clone()
-        //     };
-        //     let new_vmas = old_vmas
-        //         .into_iter()
-        //         .flat_map(|vma| {
-        //             // Keep the two sentry VMA intact
-        //             if vma.size() == 0 {
-        //                 return vec![vma];
-        //             }
-
-        //             let intersection_vma = match vma.intersect(&munmap_range) {
-        //                 None => return vec![vma],
-        //                 Some(intersection_vma) => intersection_vma,
-        //             };
-
-        //             // File-backed VMA needs to be flushed upon munmap
-        //             Self::flush_file_vma(&intersection_vma);
-
-        //             // Reset memory permissions
-        //             Self::apply_perms(&intersection_vma, VMPerms::default());
-
-        //             vma.subtract(&intersection_vma)
-        //         })
-        //         .collect();
-        //     *self.vmas.lock().unwrap() = new_vmas;
-        // }
-        // Ok(())
     }
 
     pub fn mremap(&self, options: &VMRemapOptions) -> Result<usize> {
@@ -790,16 +717,30 @@ impl VMManager {
     pub fn mprotect(&self, addr: usize, size: usize, new_perms: VMPerms) -> Result<()> {
         let protect_range = VMRange::new_with_size(addr, size)?;
 
+        unsafe {
+            self.spin_lock.0.lock();
+        }
         // FIXME: the current implementation requires the target range to be
         // contained in exact one VMA.
         let containing_idx = self
             .find_containing_vma_idx(&protect_range)
-            .ok_or_else(|| errno!(ENOMEM, "invalid range"))?;
+            .ok_or_else(|| {
+                let dirty_queue = self.dirty.lock().unwrap();
+                let idx = Self::find_dirty_vm_range_idx(&dirty_queue, &protect_range);
+                println!("protect range in dirty queue: {:?}", idx);
+                unsafe {
+                    self.spin_lock.0.unlock();
+                }
+                errno!(ENOMEM, "invalid range")
+            })?;
         let mut vmas = self.vmas.lock().unwrap();
         let containing_vma = &vmas[containing_idx];
 
         let old_perms = containing_vma.perms();
         if new_perms == old_perms {
+            unsafe {
+                self.spin_lock.0.unlock();
+            }
             return Ok(());
         }
 
@@ -855,6 +796,9 @@ impl VMManager {
                 self.insert_new_vma(containing_idx + 1, new_vma);
                 self.insert_new_vma(containing_idx + 2, new_vma2);
             }
+        }
+        unsafe {
+            self.spin_lock.0.unlock();
         }
 
         Ok(())
@@ -951,10 +895,8 @@ impl VMManager {
 
     // Find the dirty vm_range idx in the dirty queue
     // Must be used within spin_lock
-    fn find_dirty_vm_range_idx(&self, target_range: &VMRange) -> Option<usize> {
-        self.dirty
-            .lock()
-            .unwrap()
+    fn find_dirty_vm_range_idx(dirty_queue: &VecDeque<VMRange>, target_range: &VMRange) -> Option<usize> {
+        dirty_queue
             .iter()
             .position(|range| range.is_superset_of(target_range))
     }
@@ -1167,6 +1109,7 @@ impl Drop for VMManager {
 }
 
 pub extern "C" fn mem_worker_thread_start(main: *mut libc::c_void) -> *mut libc::c_void {
+    let mut done = DONE.lock().unwrap();
     while unsafe { RUNNING } {
         //println!("in a custom thread");
         let all_process = get_all_processes();
@@ -1175,7 +1118,15 @@ pub extern "C" fn mem_worker_thread_start(main: *mut libc::c_void) -> *mut libc:
                 thread.vm().get_mmap_manager().update_munmap_range();
             }
         }
+        // let all_thread = get_all_threads();
+        // for thread in all_thread.iter() {
+        //     if thread.status() == ThreadStatus::Exited {
+        //         continue;
+        //     }
+        //     thread.vm().get_mmap_manager().update_munmap_range();
+        // }
     }
-
+    *done = true;
+    drop(done);
     ptr::null_mut()
 }

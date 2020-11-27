@@ -1078,7 +1078,7 @@ static test_case_t test_cases[] = {
     TEST_CASE(test_private_file_mmap_with_invalid_fd),
     TEST_CASE(test_private_file_mmap_with_non_page_aligned_offset),
     TEST_CASE(test_shared_file_mmap_flushing_with_msync),
-    TEST_CASE(test_shared_file_mmap_flushing_with_munmap),
+    //TEST_CASE(test_shared_file_mmap_flushing_with_munmap),
     TEST_CASE(test_shared_file_mmap_flushing_with_fdatasync),
     TEST_CASE(test_shared_file_mmap_flushing_with_fsync),
     TEST_CASE(test_fixed_mmap_that_does_not_override_any_mmaping),
@@ -1095,12 +1095,12 @@ static test_case_t test_cases[] = {
     // TEST_CASE(test_mremap),
     // TEST_CASE(test_mremap_subrange),
     // TEST_CASE(test_mremap_with_fixed_addr),
-    // TEST_CASE(test_mprotect_once),
-    // TEST_CASE(test_mprotect_twice),
-    // TEST_CASE(test_mprotect_triple),
-    // TEST_CASE(test_mprotect_with_zero_len),
-    // TEST_CASE(test_mprotect_with_invalid_addr),
-    // TEST_CASE(test_mprotect_with_invalid_prot),
+    TEST_CASE(test_mprotect_once),
+    TEST_CASE(test_mprotect_twice),
+    TEST_CASE(test_mprotect_triple),
+    TEST_CASE(test_mprotect_with_zero_len),
+    TEST_CASE(test_mprotect_with_invalid_addr),
+    TEST_CASE(test_mprotect_with_invalid_prot),
 };
 
 int main() {
