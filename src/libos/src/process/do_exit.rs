@@ -4,7 +4,7 @@ use std::intrinsics::atomic_store;
 use super::do_futex::futex_wake;
 use super::process::{Process, ProcessFilter};
 use super::{table, TermStatus, ThreadRef, ThreadStatus};
-use crate::entry::{native, RUNNING, DONE};
+use crate::entry::{native, DONE, RUNNING};
 use crate::libc::pthread_join;
 use crate::prelude::*;
 use crate::signal::{KernelSignal, SigNum};

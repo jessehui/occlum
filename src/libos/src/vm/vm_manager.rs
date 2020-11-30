@@ -2,8 +2,8 @@ use super::*;
 
 use super::vm_area::VMArea;
 use super::vm_perms::VMPerms;
-use crate::entry::{RUNNING, DONE};
-use crate::process::table::{ get_all_threads,get_all_processes} ;
+use crate::entry::{DONE, RUNNING};
+use crate::process::table::{get_all_processes, get_all_threads};
 use crate::process::ThreadStatus;
 use crate::time::timespec_t;
 use core::ptr;
@@ -369,7 +369,7 @@ impl VMManager {
         let size = *options.size();
 
         if let VMMapAddr::Force(addr) = addr {
-            let force_vm_range = unsafe{VMRange::from_unchecked(addr, addr+size)};
+            let force_vm_range = unsafe { VMRange::from_unchecked(addr, addr + size) };
             let mut dirty_queue = self.dirty.lock().unwrap();
             unsafe {
                 self.spin_lock.0.lock();
@@ -391,7 +391,7 @@ impl VMManager {
         }
 
         if let VMMapAddr::Hint(addr) = addr {
-            let hint_vm_range = unsafe{VMRange::from_unchecked(addr, addr+size)};
+            let hint_vm_range = unsafe { VMRange::from_unchecked(addr, addr + size) };
             let mut dirty_queue = self.dirty.lock().unwrap();
             unsafe {
                 self.spin_lock.0.lock();
@@ -426,11 +426,11 @@ impl VMManager {
         if options.perms.can_execute() {
             Self::apply_perms(&new_vma, new_vma.perms());
         }
-        println!("1 mmap range vma: {:?}", new_vma);
+        //println!("1 mmap range vma: {:?}", new_vma);
 
         // After initializing, we can safely insert the new VMA
         self.insert_new_vma(insert_idx, new_vma);
-        println!("1 new vmas: {:?}", self.vmas.lock().unwrap());
+        //println!("1 new vmas: {:?}", self.vmas.lock().unwrap());
         unsafe {
             self.spin_lock.0.unlock();
         }
@@ -458,7 +458,7 @@ impl VMManager {
             }
             effective_munmap_range
         };
-        println!("1 munmap range: {:?}", munmap_range);
+        //println!("1 munmap range: {:?}", munmap_range);
         self.dirty.lock().unwrap().push_back(munmap_range);
 
         Ok(())
@@ -567,19 +567,18 @@ impl VMManager {
                             Self::apply_perms(&intersection_vma, VMPerms::default());
                         }
                         intersection_vma.range().clean();
-                        println!("0 intersection_vma = {:?}", intersection_vma);
+                        //println!("0 intersection_vma = {:?}", intersection_vma);
                         vma.subtract(&intersection_vma)
                     })
                     .collect();
                 *self.vmas.lock().unwrap() = new_vmas;
-                println!("0 bgthread clean munmap range = {:?}", munmap_range);
+                //println!("0 bgthread clean munmap range = {:?}", munmap_range);
                 unsafe {
                     self.spin_lock.0.unlock();
                 }
+            } else {
+                return Ok(());
             }
-            // if !unsafe { RUNNING } {
-            //     return Ok(());
-            // }
         }
         Ok(())
     }
@@ -727,7 +726,7 @@ impl VMManager {
             .ok_or_else(|| {
                 let dirty_queue = self.dirty.lock().unwrap();
                 let idx = Self::find_dirty_vm_range_idx(&dirty_queue, &protect_range);
-                println!("protect range in dirty queue: {:?}", idx);
+                //println!("protect range in dirty queue: {:?}", idx);
                 unsafe {
                     self.spin_lock.0.unlock();
                 }
@@ -810,15 +809,15 @@ impl VMManager {
         if !self.range().is_superset_of(&sync_range) {
             return_errno!(ENOMEM, "invalid range");
         }
-        println!("msync range: {:?}", sync_range);
+        //println!("msync range: {:?}", sync_range);
         unsafe {
             self.spin_lock.0.lock();
         }
-        println!("msync vmas: {:?}", self.vmas.lock().unwrap());
+        //println!("msync vmas: {:?}", self.vmas.lock().unwrap());
         let vmas = self.vmas.lock().unwrap();
         // FIXME: check if sync_range covers unmapped memory
         for (idx, vma) in vmas.iter().enumerate() {
-            println!("idx = {}", idx);
+            //println!("idx = {}", idx);
             let vma = match vma.intersect(sync_range) {
                 None => continue,
                 Some(vma) => vma,
@@ -895,7 +894,10 @@ impl VMManager {
 
     // Find the dirty vm_range idx in the dirty queue
     // Must be used within spin_lock
-    fn find_dirty_vm_range_idx(dirty_queue: &VecDeque<VMRange>, target_range: &VMRange) -> Option<usize> {
+    fn find_dirty_vm_range_idx(
+        dirty_queue: &VecDeque<VMRange>,
+        target_range: &VMRange,
+    ) -> Option<usize> {
         dirty_queue
             .iter()
             .position(|range| range.is_superset_of(target_range))
