@@ -152,6 +152,16 @@ impl VMRange {
         let buf_size = self.size() as usize;
         std::slice::from_raw_parts_mut(buf_ptr, buf_size)
     }
+
+    // <<<<<<< HEAD
+    // =======
+
+    //     pub unsafe fn clean(&self) -> Result<()> {
+    //         let buf = self.as_slice_mut();
+    //         buf.iter_mut().for_each(|b| *b = 0);
+    //         Ok(())
+    //     }
+    // >>>>>>> d7f751d... Seperate mmap range to R/W default permission
 }
 
 impl fmt::Debug for VMRange {

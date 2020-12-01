@@ -303,8 +303,10 @@ impl VMManager {
             let buf = new_vma.as_slice_mut();
             options.initializer.init_slice(buf)?;
         }
-        // Set memory permissions
-        Self::apply_perms(&new_vma, new_vma.perms());
+        // Set memory permissions. Initial permission R/W
+        if options.perms.can_execute() {
+            Self::apply_perms(&new_vma, new_vma.perms());
+        }
 
         // After initializing, we can safely insert the new VMA
         self.insert_new_vma(insert_idx, new_vma);
@@ -356,7 +358,9 @@ impl VMManager {
                 Self::flush_file_vma(&intersection_vma);
 
                 // Reset memory permissions
-                Self::apply_perms(&intersection_vma, VMPerms::default());
+                if !&intersection_vma.perms().is_default() {
+                    Self::apply_perms(&intersection_vma, VMPerms::default());
+                }
 
                 vma.subtract(&intersection_vma)
             })

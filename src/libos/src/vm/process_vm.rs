@@ -131,6 +131,7 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
         let mmap_layout = &other_layouts[2];
         let mmap_min_start = stack_range.end();
         let mmap_range = VMRange::new_with_layout(mmap_layout, mmap_min_start);
+        UserSpaceVMManager::init_mmap(mmap_range.start(), mmap_range.size())?;
         let mmap_manager = VMManager::from(mmap_range.start(), mmap_range.size())?;
         // Note: we do not need to fill zeros of the mmap region.
         // VMManager will fill zeros (if necessary) on mmap.
