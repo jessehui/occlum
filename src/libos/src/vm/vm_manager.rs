@@ -376,44 +376,44 @@ impl VMManager {
         let addr = *options.addr();
         let size = *options.size();
 
-        if let VMMapAddr::Force(addr) = addr {
-            let force_vm_range = unsafe { VMRange::from_unchecked(addr, addr + size) };
-            let mut dirty_queue = self.dirty.lock().unwrap();
-            unsafe {
-                self.spin_lock.0.lock();
-            }
-            //drop(dirty_queue);
-            // First check if the range is in dirty queue
-            if let Some(idx) = Self::find_dirty_vm_range_idx(&dirty_queue, &force_vm_range) {
-                self.munmap_dirty_range_by_hand(&mut dirty_queue, idx);
-                unsafe {
-                    self.spin_lock.0.unlock();
-                }
-            } else {
-                // The range is not munmapped yet
-                unsafe {
-                    self.spin_lock.0.unlock();
-                }
-                self.munmap_sync(addr, size)?;
-            }
-        }
+        // if let VMMapAddr::Force(addr) = addr {
+        //     let force_vm_range = unsafe { VMRange::from_unchecked(addr, addr + size) };
+        //     let mut dirty_queue = self.dirty.lock().unwrap();
+        //     unsafe {
+        //         self.spin_lock.0.lock();
+        //     }
+        //     //drop(dirty_queue);
+        //     // First check if the range is in dirty queue
+        //     if let Some(idx) = Self::find_dirty_vm_range_idx(&dirty_queue, &force_vm_range) {
+        //         self.munmap_dirty_range_by_hand(&mut dirty_queue, idx);
+        //         unsafe {
+        //             self.spin_lock.0.unlock();
+        //         }
+        //     } else {
+        //         // The range is not munmapped yet
+        //         unsafe {
+        //             self.spin_lock.0.unlock();
+        //         }
+        //         self.munmap_sync(addr, size)?;
+        //     }
+        // }
 
-        if let VMMapAddr::Hint(addr) = addr {
-            let hint_vm_range = unsafe { VMRange::from_unchecked(addr, addr + size) };
-            let mut dirty_queue = self.dirty.lock().unwrap();
-            unsafe {
-                self.spin_lock.0.lock();
-            }
-            //drop(dirty_queue);
-            // Check if the range is in dirty queue
-            if let Some(idx) = Self::find_dirty_vm_range_idx(&dirty_queue, &hint_vm_range) {
-                self.munmap_dirty_range_by_hand(&mut dirty_queue, idx);
-            }
-            // If not in dirty queue, the range is in use. Do nothing.
-            unsafe {
-                self.spin_lock.0.unlock();
-            }
-        }
+        // if let VMMapAddr::Hint(addr) = addr {
+        //     let hint_vm_range = unsafe { VMRange::from_unchecked(addr, addr + size) };
+        //     let mut dirty_queue = self.dirty.lock().unwrap();
+        //     unsafe {
+        //         self.spin_lock.0.lock();
+        //     }
+        //     //drop(dirty_queue);
+        //     // Check if the range is in dirty queue
+        //     if let Some(idx) = Self::find_dirty_vm_range_idx(&dirty_queue, &hint_vm_range) {
+        //         self.munmap_dirty_range_by_hand(&mut dirty_queue, idx);
+        //     }
+        //     // If not in dirty queue, the range is in use. Do nothing.
+        //     unsafe {
+        //         self.spin_lock.0.unlock();
+        //     }
+        // }
 
         // free list and vmas must be updated together
         unsafe {
@@ -438,8 +438,22 @@ impl VMManager {
         //println!("1 mmap range vma: {:?}", new_vma);
 
         // After initializing, we can safely insert the new VMA
-        //self.insert_new_vma(insert_idx, new_vma);
-        self.vmas.lock().unwrap().push(new_vma);
+
+        let mut insert_idx: usize = 0;
+        let vmas = self.vmas.lock().unwrap();
+        for (idx, vma_pair) in vmas.windows(2).enumerate() {
+            let pre_vma = &vma_pair[0];
+            let next_vma = &vma_pair[1];
+
+            if new_vma.start() >= pre_vma.end() && new_vma.end() <= next_vma.start() {
+                insert_idx = idx + 1;
+                break;
+            }
+            // TODO: more cases
+        }
+        drop(vmas);
+        self.insert_new_vma(insert_idx, new_vma);
+        //self.vmas.lock().unwrap().push(new_vma);
         //println!("1 new vmas: {:?}", self.vmas.lock().unwrap());
         unsafe {
             self.spin_lock.0.unlock();
@@ -469,13 +483,12 @@ impl VMManager {
             effective_munmap_range
         };
 
-        let mut current = self.vmas.lock().unwrap();
-        // unsafe {
-        //     self.spin_lock.0.lock();
-        // }
+        unsafe {
+            self.spin_lock.0.lock();
+        }
         let old_vmas = {
             let mut old_vmas = Vec::new();
-            // let mut current = self.vmas.lock().unwrap();
+            let mut current = self.vmas.lock().unwrap();
             std::mem::swap(&mut *current, &mut old_vmas);
             old_vmas
         };
@@ -503,13 +516,12 @@ impl VMManager {
                 vma.subtract(&intersection_vma)
             })
             .collect();
-        *current = new_vmas;
-        drop(current);
-        // unsafe {
-        //     self.spin_lock.0.unlock();
-        // }
+        *self.vmas.lock().unwrap() = new_vmas;
         //println!("1 munmap range: {:?}", munmap_range);
         self.dirty.lock().unwrap().push_back(munmap_range);
+        unsafe {
+            self.spin_lock.0.unlock();
+        }
 
         Ok(())
     }
@@ -593,10 +605,10 @@ impl VMManager {
                     self.spin_lock.0.lock();
                 }
                 //let free_list = self.free.lock().unwrap();
-                self.vmas
-                    .lock()
-                    .unwrap()
-                    .sort_unstable_by(|vma_a, vma_b| vma_a.range().start.cmp(&vma_b.range().start));
+                // self.vmas
+                //     .lock()
+                //     .unwrap()
+                //     .sort_unstable_by(|vma_a, vma_b| vma_a.range().start.cmp(&vma_b.range().start));
                 new_free_list = self.get_free_from_vmas(new_free_list);
                 *self.free.lock().unwrap() = new_free_list;
                 unsafe {
