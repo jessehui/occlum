@@ -4,7 +4,7 @@ all:
 	@$(MAKE) --no-print-directory -C libos
 	@$(MAKE) --no-print-directory -C pal
 	@$(MAKE) --no-print-directory -C run
-	#@$(MAKE) --no-print-directory -C exec
+	@$(MAKE) --no-print-directory -C exec
 
 format:
 	@$(MAKE) --no-print-directory -C libos format
