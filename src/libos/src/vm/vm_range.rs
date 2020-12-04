@@ -82,6 +82,10 @@ impl VMRange {
         self.start() <= other.start() && other.end() <= self.end()
     }
 
+    pub fn is_subset_of(&self, other: &VMRange) -> bool {
+        other.start() <= self.start() && self.end() <= other.end()
+    }
+
     pub fn contains(&self, addr: usize) -> bool {
         self.start() <= addr && addr < self.end()
     }

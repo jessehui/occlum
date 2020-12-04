@@ -266,6 +266,7 @@ pub struct VMManager {
     vmas: SgxMutex<Vec<VMArea>>,
     dirty: SgxMutex<VecDeque<VMRange>>,
     free: SgxMutex<Vec<VMRange>>,
+    cleaning_range: SgxMutex<Option<VMRange>>,
     spin_lock: SpinLock,
 }
 
@@ -322,11 +323,13 @@ impl VMManager {
         let mut _free = Vec::with_capacity(100);
         _free.push(range.clone());
         let free = SgxMutex::new(_free);
+        let cleaning_range = SgxMutex::new(None);
         Ok(VMManager {
             range,
             vmas,
             dirty,
             free,
+            cleaning_range,
             spin_lock,
         })
     }
@@ -335,9 +338,38 @@ impl VMManager {
         &self.range
     }
 
+    // Munmap a range when this range is already munmap by user but not cleaned yet.
     // Need spin_lock
-    pub fn munmap_dirty_range_by_hand(&self, dirty_queue: &mut VecDeque<VMRange>, idx: usize) {
+    pub fn clean_dirty_range_by_hand(&self, dirty_queue: &mut VecDeque<VMRange>, idx: usize) {
         let dirty_range = dirty_queue.swap_remove_back(idx).unwrap();
+        dirty_range.clean();
+        self.add_clean_range_backto_free_list_1(dirty_range);
+    }
+
+    // Munmap a range when this range has not been munmapped by user yet
+    // Need spin_lock
+    pub fn munmap_sync(&self, addr: usize, size: usize) -> Result<()> {
+        let size = {
+            if size == 0 {
+                return_errno!(EINVAL, "size of munmap must not be zero");
+            }
+            align_up(size, PAGE_SIZE)
+        };
+        let munmap_range = {
+            let munmap_range = VMRange::new(addr, addr + size)?;
+
+            let effective_munmap_range_opt = munmap_range.intersect(&self.range);
+            if effective_munmap_range_opt.is_none() {
+                return Ok(());
+            }
+
+            let effective_munmap_range = effective_munmap_range_opt.unwrap();
+            if effective_munmap_range.empty() {
+                return Ok(());
+            }
+            effective_munmap_range
+        };
+
         let old_vmas = {
             let mut old_vmas = Vec::new();
             let mut current = self.vmas.lock().unwrap();
@@ -352,7 +384,7 @@ impl VMManager {
                     return vec![vma];
                 }
 
-                let intersection_vma = match vma.intersect(&dirty_range) {
+                let intersection_vma = match vma.intersect(&munmap_range) {
                     None => return vec![vma],
                     Some(intersection_vma) => intersection_vma,
                 };
@@ -369,7 +401,172 @@ impl VMManager {
             })
             .collect();
         *self.vmas.lock().unwrap() = new_vmas;
-        self.add_clean_range_backto_free_list(dirty_range);
+        self.add_clean_range_backto_free_list_1(munmap_range);
+        Ok(())
+    }
+
+    // main fix
+    // fn add_clean_range_backto_free_list_1(&self, clean_range: VMRange) -> Result<()> {
+    //     let mut free_list = self.free.lock().unwrap();
+    //     println!("1. dirty_range = {:?}", clean_range);
+    //     println!("1. before update free_list = {:?}", free_list);
+    //     let free_list_len = free_list.len();
+    //     if free_list_len == 1 {
+    //         let current_free_range = free_list[0];
+    //         if current_free_range.is_superset_of(&clean_range) {
+    //             return Ok();
+    //         }
+    //         if current_free_range.is_subset_of(&clean_range) {
+    //             free_list[0] = clean_range;
+    //         }
+    //         let mut insert_idx = 0;
+    //         if clean_range.end() <= current_free_range.start() {
+    //             insert_idx = 0;
+    //         } else if current_free_range.end() <= clean_range.start() {
+    //             insert_idx = 1;
+    //         }
+    //         let left_mergable = Self::can_merge_range(&clean_range, &current_free_range);
+    //         let right_mergable = Self::can_merge_range(&current_free_range, &clean_range);
+    //         match (left_mergable, right_mergable) {
+    //             (false, false) => {
+    //                 free_list.insert(insert_idx, clean_range);
+    //             }
+    //             (true, false) => {
+    //                 free_list[0].set_start(clean_range.start);
+    //             }
+    //             (false, true) => {
+    //                 free_list[0].set_end(clean_range.end);
+    //             }
+    //             (true, true) => {
+    //                 return_errno!(EINVAL,"the munmap range can't be both left right mergable");
+    //             }
+    //         }
+    //     } else {
+    //         for(insert_idx, range_pair) in free_list.windows(2).enumerate() {
+    //             let mut left_range = &range_pair[0];
+    //             let mut right_range = &range_pair[1];
+    //             if clean_range.start() >= right_range.end() {
+    //                 continue;
+    //             }
+    //             let left_idx = insert_idx;
+    //             let right_idx = insert_idx + 1;
+    //             if left_range.is_superset_of(&clean_range) {
+    //                 break;
+    //             }
+    //             if left_range.is_subset_of(&clean_range) {
+    //                 left_range = clean_range;
+    //                 if left_range > right_range.end() {
+    //                     handle_huge_clean_range(left_idx, left_range);
+    //                     break;
+    //                 }
+    //             }
+
+    //             // last free range
+    //             if right_idx == free_list_len - 1 {
+    //                 if right_range.is_superset_of(&clean_range) {
+    //                     break;
+    //                 }
+    //                 if right_range.is_subset_of(&clean_range) {
+    //                     right_range = clean_range;
+    //                 }
+    //             }
+    //             let left_mergable = Self::can_merge_range(left_range, &clean_range);
+    //             let right_mergable = Self::can_merge_range(&clean_range, right_range);
+
+    //             match (left_mergable, right_mergable) {
+    //                 (false, false) => {
+    //                     if clean_range.end() < right_range.start() {
+    //                         free_list.insert(right_idx, clean_range);
+    //                     } else {
+    //                         //clean_range.end > right_range.end
+    //                         continue;
+    //                     }
+    //                 }
+    //                 (true, false) => {
+    //                     free_list[left_idx].set_end(clean_range.end);
+    //                 }
+    //                 (false, true) => {
+    //                     free_list[right_idx].set_start(clean_range.start);
+    //                 }
+    //                 (true, true) => {
+    //                     let left_new_end = free_list[right_idx].end();
+    //                     free_list[left_idx].set_end(left_new_end);
+    //                     free_list.remove(right_idx);
+    //                 }
+    //             }
+    //             break;
+    //         }
+    //     }
+    //     println!("1. after update free_list = {:?}", free_list);
+    //     Ok(())
+    // }
+
+    fn add_clean_range_backto_free_list_1(&self, clean_range: VMRange) -> Result<()> {
+        let mut new_free_list = Vec::with_capacity(100);
+        let mut free_list = self.free.lock().unwrap();
+        println!("1. dirty_range = {:?}", clean_range);
+        println!("1. before update free_list = {:?}", free_list);
+        free_list.push(clean_range);
+        free_list.sort_unstable_by(|range_a, range_b| range_a.start().cmp(&range_b.start()));
+
+        new_free_list.push(free_list[0]);
+        for i in 1..free_list.len() {
+            let &mut top = new_free_list.as_mut_slice().last_mut().unwrap();
+
+            if top.end() < free_list[i].start() {
+                new_free_list.push(free_list[i]);
+            } else if top.end() < free_list[i].end() {
+                let mut new_top = top.clone();
+                new_top.end = free_list[i].end();
+                new_free_list.pop();
+                new_free_list.push(new_top);
+            }
+        }
+        *free_list = new_free_list;
+        println!("1. after update free_list = {:?}", free_list);
+        Ok(())
+    }
+
+    fn add_clean_range_backto_free_list(&self, clean_range: VMRange) -> Result<()> {
+        let mut new_free_list = Vec::with_capacity(100);
+        let mut free_list = self.free.lock().unwrap();
+        println!("0. dirty_range = {:?}", clean_range);
+        println!("0. before update free_list = {:?}", free_list);
+        free_list.push(clean_range);
+        free_list.sort_unstable_by(|range_a, range_b| range_a.start().cmp(&range_b.start()));
+
+        new_free_list.push(free_list[0]);
+        for i in 1..free_list.len() {
+            let &mut top = new_free_list.as_mut_slice().last_mut().unwrap();
+
+            if top.end() < free_list[i].start() {
+                new_free_list.push(free_list[i]);
+            } else if top.end() < free_list[i].end() {
+                let mut new_top = top.clone();
+                new_top.end = free_list[i].end();
+                new_free_list.pop();
+                new_free_list.push(new_top);
+            }
+        }
+        *free_list = new_free_list;
+        println!("0. after update free_list = {:?}", free_list);
+        Ok(())
+    }
+
+    fn the_range_is_cleaning(&self, range: &VMRange) -> bool {
+        let _range = self.cleaning_range.lock().unwrap();
+        match *_range {
+            None => {
+                return false;
+            }
+            Some(cleaning_range) => {
+                if cleaning_range.intersect(range).is_some() {
+                    return true;
+                } else {
+                    return false;
+                }
+            }
+        }
     }
 
     pub fn mmap(&self, mut options: VMMapOptions) -> Result<usize> {
@@ -385,35 +582,55 @@ impl VMManager {
             let mut dirty_queue = self.dirty.lock().unwrap();
             // First check if the range is in dirty queue
             if let Some(idx) = Self::find_dirty_vm_range_idx(&dirty_queue, &force_vm_range) {
-                self.munmap_dirty_range_by_hand(&mut dirty_queue, idx);
+                self.clean_dirty_range_by_hand(&mut dirty_queue, idx);
+            } else if self.the_range_is_cleaning(&force_vm_range) {
+                // wait for the range to be cleaned up and add back to clean range
                 unsafe {
+                    // unlock for bgthread to update cleaning range
                     self.spin_lock.0.unlock();
+                }
+                loop {
+                    let cleaning_range = self.cleaning_range.lock().unwrap();
+                    if *cleaning_range == None {
+                        break;
+                    }
+                    drop(cleaning_range);
                 }
             } else {
                 // The range is not munmapped yet
-                unsafe {
-                    self.spin_lock.0.unlock();
-                }
                 self.munmap_sync(addr, size)?;
+            }
+            unsafe {
+                self.spin_lock.0.unlock();
             }
         }
 
-        // if let VMMapAddr::Hint(addr) = addr {
-        //     let hint_vm_range = unsafe { VMRange::from_unchecked(addr, addr + size) };
-        //     let mut dirty_queue = self.dirty.lock().unwrap();
-        //     unsafe {
-        //         self.spin_lock.0.lock();
-        //     }
-        //     //drop(dirty_queue);
-        //     // Check if the range is in dirty queue
-        //     if let Some(idx) = Self::find_dirty_vm_range_idx(&dirty_queue, &hint_vm_range) {
-        //         self.munmap_dirty_range_by_hand(&mut dirty_queue, idx);
-        //     }
-        //     // If not in dirty queue, the range is in use. Do nothing.
-        //     unsafe {
-        //         self.spin_lock.0.unlock();
-        //     }
-        // }
+        if let VMMapAddr::Hint(addr) = addr {
+            let hint_vm_range = unsafe { VMRange::from_unchecked(addr, addr + size) };
+            unsafe {
+                self.spin_lock.0.lock();
+            }
+            let mut dirty_queue = self.dirty.lock().unwrap();
+            if let Some(idx) = Self::find_dirty_vm_range_idx(&dirty_queue, &hint_vm_range) {
+                self.clean_dirty_range_by_hand(&mut dirty_queue, idx);
+            } else if self.the_range_is_cleaning(&hint_vm_range) {
+                // wait for the range to be cleaned up and add back to clean range
+                unsafe {
+                    self.spin_lock.0.unlock();
+                }
+                loop {
+                    let cleaning_range = self.cleaning_range.lock().unwrap();
+                    if *cleaning_range == None {
+                        break;
+                    }
+                    drop(cleaning_range);
+                }
+            }
+            // If not in dirty queue, and the range is not currently cleaning, then the range is in use. Do nothing.
+            unsafe {
+                self.spin_lock.0.unlock();
+            }
+        }
 
         // free list and vmas must be updated together
         unsafe {
@@ -527,69 +744,6 @@ impl VMManager {
         Ok(())
     }
 
-    pub fn munmap_sync(&self, addr: usize, size: usize) -> Result<()> {
-        let size = {
-            if size == 0 {
-                return_errno!(EINVAL, "size of munmap must not be zero");
-            }
-            align_up(size, PAGE_SIZE)
-        };
-        let munmap_range = {
-            let munmap_range = VMRange::new(addr, addr + size)?;
-
-            let effective_munmap_range_opt = munmap_range.intersect(&self.range);
-            if effective_munmap_range_opt.is_none() {
-                return Ok(());
-            }
-
-            let effective_munmap_range = effective_munmap_range_opt.unwrap();
-            if effective_munmap_range.empty() {
-                return Ok(());
-            }
-            effective_munmap_range
-        };
-
-        unsafe {
-            self.spin_lock.0.lock();
-        }
-        let old_vmas = {
-            let mut old_vmas = Vec::new();
-            let mut current = self.vmas.lock().unwrap();
-            std::mem::swap(&mut *current, &mut old_vmas);
-            old_vmas
-        };
-        let new_vmas = old_vmas
-            .into_iter()
-            .flat_map(|vma| {
-                // Keep the two sentry VMA intact
-                if vma.size() == 0 {
-                    return vec![vma];
-                }
-
-                let intersection_vma = match vma.intersect(&munmap_range) {
-                    None => return vec![vma],
-                    Some(intersection_vma) => intersection_vma,
-                };
-
-                // File-backed VMA needs to be flushed upon munmap
-                Self::flush_file_vma(&intersection_vma);
-
-                // Reset memory permissions
-                if !&intersection_vma.perms().is_default() {
-                    Self::apply_perms(&intersection_vma, VMPerms::default());
-                }
-                intersection_vma.range().clean();
-                vma.subtract(&intersection_vma)
-            })
-            .collect();
-        *self.vmas.lock().unwrap() = new_vmas;
-        self.add_clean_range_backto_free_list(munmap_range);
-        unsafe {
-            self.spin_lock.0.unlock();
-        }
-        Ok(())
-    }
-
     pub fn update_munmap_range(&self) -> Result<()> {
         let mut working = true;
         while working {
@@ -599,14 +753,14 @@ impl VMManager {
                     working = false;
                 }
                 let munmap_range = dirty_queue.pop_front().unwrap();
+                *self.cleaning_range.lock().unwrap() = Some(munmap_range);
                 drop(dirty_queue);
                 munmap_range.clean();
-                //let mut new_free_list = Vec::with_capacity(10);
-                // free list and vmas must be updated together
                 unsafe {
                     self.spin_lock.0.lock();
                 }
                 self.add_clean_range_backto_free_list(munmap_range);
+                *self.cleaning_range.lock().unwrap() = None;
                 unsafe {
                     self.spin_lock.0.unlock();
                 }
@@ -617,68 +771,68 @@ impl VMManager {
         Ok(())
     }
 
-    fn add_clean_range_backto_free_list(&self, clean_range: VMRange) -> Result<()> {
-        let mut free_list = self.free.lock().unwrap();
-        println!("0. dirty_range = {:?}", clean_range);
-        println!("0. before update free_list = {:?}", free_list);
-        if free_list.len() == 1 {
-            let current_free_range = free_list[0];
-            let mut insert_idx = 0;
-            if clean_range.end() <= current_free_range.start() {
-                insert_idx = 0;
-            } else if current_free_range.end() <= clean_range.start() {
-                insert_idx = 1;
-            }
-            let left_mergable = Self::can_merge_range(&clean_range, &current_free_range);
-            let right_mergable = Self::can_merge_range(&current_free_range, &clean_range);
-            match (left_mergable, right_mergable) {
-                (false, false) => {
-                    free_list.insert(insert_idx, clean_range);
-                }
-                (true, false) => {
-                    free_list[0].set_start(clean_range.start);
-                }
-                (false, true) => {
-                    free_list[0].set_end(clean_range.end);
-                }
-                (true, true) => {
-                    return_errno!(EINVAL,"the munmap range can't be both left right mergable");
-                }
-            }
-        } else {
-            for(insert_idx, range_pair) in free_list.windows(2).enumerate() {
-                let left_range = &range_pair[0];
-                let right_range = &range_pair[1];
-                if clean_range.start() >= right_range.end() {
-                    continue;
-                }
-                let left_idx = insert_idx;
-                let right_idx = insert_idx + 1;
-                let left_mergable = Self::can_merge_range(left_range, &clean_range);
-                let right_mergable = Self::can_merge_range(&clean_range, right_range);
+    // fn add_clean_range_backto_free_list(&self, clean_range: VMRange) -> Result<()> {
+    //     let mut free_list = self.free.lock().unwrap();
+    //     println!("0. dirty_range = {:?}", clean_range);
+    //     println!("0. before update free_list = {:?}", free_list);
+    //     if free_list.len() == 1 {
+    //         let current_free_range = free_list[0];
+    //         let mut insert_idx = 0;
+    //         if clean_range.end() <= current_free_range.start() {
+    //             insert_idx = 0;
+    //         } else if current_free_range.end() <= clean_range.start() {
+    //             insert_idx = 1;
+    //         }
+    //         let left_mergable = Self::can_merge_range(&clean_range, &current_free_range);
+    //         let right_mergable = Self::can_merge_range(&current_free_range, &clean_range);
+    //         match (left_mergable, right_mergable) {
+    //             (false, false) => {
+    //                 free_list.insert(insert_idx, clean_range);
+    //             }
+    //             (true, false) => {
+    //                 free_list[0].set_start(clean_range.start);
+    //             }
+    //             (false, true) => {
+    //                 free_list[0].set_end(clean_range.end);
+    //             }
+    //             (true, true) => {
+    //                 return_errno!(EINVAL,"the munmap range can't be both left right mergable");
+    //             }
+    //         }
+    //     } else {
+    //         for(insert_idx, range_pair) in free_list.windows(2).enumerate() {
+    //             let left_range = &range_pair[0];
+    //             let right_range = &range_pair[1];
+    //             if clean_range.start() >= right_range.end() {
+    //                 continue;
+    //             }
+    //             let left_idx = insert_idx;
+    //             let right_idx = insert_idx + 1;
+    //             let left_mergable = Self::can_merge_range(left_range, &clean_range);
+    //             let right_mergable = Self::can_merge_range(&clean_range, right_range);
 
-                match (left_mergable, right_mergable) {
-                    (false, false) => {
-                        free_list.insert(right_idx, clean_range);
-                    }
-                    (true, false) => {
-                        free_list[left_idx].set_end(clean_range.end);
-                    }
-                    (false, true) => {
-                        free_list[right_idx].set_start(clean_range.start);
-                    }
-                    (true, true) => {
-                        let left_new_end = free_list[right_idx].end();
-                        free_list[left_idx].set_end(left_new_end);
-                        free_list.remove(right_idx);
-                    }
-                }
-                break;
-            }
-        }
-        println!("0. after update free_list = {:?}", free_list);
-        Ok(())
-    }
+    //             match (left_mergable, right_mergable) {
+    //                 (false, false) => {
+    //                     free_list.insert(right_idx, clean_range);
+    //                 }
+    //                 (true, false) => {
+    //                     free_list[left_idx].set_end(clean_range.end);
+    //                 }
+    //                 (false, true) => {
+    //                     free_list[right_idx].set_start(clean_range.start);
+    //                 }
+    //                 (true, true) => {
+    //                     let left_new_end = free_list[right_idx].end();
+    //                     free_list[left_idx].set_end(left_new_end);
+    //                     free_list.remove(right_idx);
+    //                 }
+    //             }
+    //             break;
+    //         }
+    //     }
+    //     println!("0. after update free_list = {:?}", free_list);
+    //     Ok(())
+    // }
 
     fn get_free_from_vmas(&self, mut free_list: Vec<VMRange>) -> Vec<VMRange> {
         let vmas = self.vmas.lock().unwrap();
@@ -1038,6 +1192,7 @@ impl VMManager {
         let mut result_free_range: Option<VMRange> = None;
         let mut result_idx: Option<usize> = None;
         let mut free_list = self.free.lock().unwrap();
+        println!("1. free list when finding free range: {:?}", free_list);
 
         for (idx, free_range) in free_list.iter().enumerate() {
             // Since we have two sentry vmas at both ends, we can be sure that the free
@@ -1061,7 +1216,7 @@ impl VMManager {
                     continue;
                 }
 
-                unsafe { VMRange::from_unchecked(free_range.start(), free_range.start() + size) }
+                unsafe { VMRange::from_unchecked(free_range.start(), free_range.end()) }
             };
 
             match addr {
@@ -1073,6 +1228,7 @@ impl VMManager {
                         if free_range.end() - addr >= size {
                             free_range.start = addr;
                             //let insert_idx = idx + 1;
+                            free_range.end = addr + size;
                             Self::free_list_update_range(free_list, idx, free_range);
                             return Ok(free_range);
                         }
@@ -1090,7 +1246,7 @@ impl VMManager {
                         return_errno!(ENOMEM, "not enough memory for fixed mmap");
                     }
                     free_range.start = addr;
-                    //let insert_idx = idx + 1;
+                    free_range.end = addr + size;
                     Self::free_list_update_range(free_list, idx, free_range);
                     return Ok(free_range);
                 }
@@ -1112,7 +1268,8 @@ impl VMManager {
         // let insert_idx = result_idx.unwrap() + 1;
         // Ok((insert_idx, free_range))
         let index = result_idx.unwrap();
-        let result_free_range = result_free_range.unwrap();
+        let mut result_free_range = result_free_range.unwrap();
+        result_free_range.end = result_free_range.start + size;
         Self::free_list_update_range(free_list, index, result_free_range);
         return Ok(result_free_range);
     }
@@ -1299,17 +1456,21 @@ impl VMManager {
     fn can_merge_range(left: &VMRange, right: &VMRange) -> bool {
         //debug_assert!(left.end() <= right.start());
 
-        // Both of the two VMAs must not be sentry (whose size == 0)
-        if left.size() == 0 || right.size() == 0 {
-            return false;
-        }
+        // // Both of the two VMAs must not be sentry (whose size == 0)
+        // if left.size() == 0 || right.size() == 0 {
+        //     return false;
+        // }
 
-        if left.end() == right.start() {
+        if left.end() >= right.start() && left.end() <= right.end() {
             return true;
         }
 
-        return false
+        return false;
     }
+
+    // fn handle_huge_clean_range(idx:usize, huge_range: &VMRange) {
+
+    // }
 
     fn apply_perms(protect_range: &VMRange, perms: VMPerms) {
         extern "C" {
