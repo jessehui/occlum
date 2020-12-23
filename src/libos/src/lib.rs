@@ -29,6 +29,7 @@ extern crate sgx_types;
 #[cfg(not(target_env = "sgx"))]
 #[macro_use]
 extern crate sgx_tstd as std;
+extern crate lru;
 extern crate sgx_tcrypto;
 extern crate sgx_trts;
 extern crate sgx_tse;
@@ -64,6 +65,7 @@ mod prelude;
 #[macro_use]
 mod error;
 
+mod cache;
 mod config;
 mod entry;
 mod events;

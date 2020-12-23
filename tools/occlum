@@ -139,6 +139,7 @@ cmd_init() {
         mkdir -p "image/$occlum_glibc_lib"
         mkdir -p "image/$cpu_lib"
     fi
+    mkdir -p image/tmpfs
     # add default /etc/hosts
     mkdir -p image/etc
     echo "127.0.0.1   localhost" > image/etc/hosts

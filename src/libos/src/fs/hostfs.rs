@@ -2,6 +2,8 @@ use alloc::string::String;
 use alloc::sync::{Arc, Weak};
 use core::any::Any;
 use rcore_fs::vfs::*;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{SgxMutex as Mutex, SgxMutexGuard as MutexGuard};
@@ -14,11 +16,20 @@ pub struct HostFS {
     self_ref: Weak<HostFS>,
 }
 
+type INodeId = usize;
+
 /// INode for `HostFS`
 pub struct HNode {
     path: PathBuf,
     file: Mutex<Option<fs::File>>,
     fs: Arc<HostFS>,
+    uid: INodeId,
+}
+
+fn get_uid_from_path(path: &PathBuf) -> Result<INodeId> {
+    let mut s = DefaultHasher::new();
+    path.to_str().unwrap().hash(&mut s);
+    Ok(s.finish() as INodeId)
 }
 
 impl FileSystem for HostFS {
@@ -32,6 +43,7 @@ impl FileSystem for HostFS {
             path: self.path.clone(),
             file: Mutex::new(None),
             fs: self.self_ref.upgrade().unwrap(),
+            uid: get_uid_from_path(&self.path).unwrap(),
         })
     }
 
@@ -77,7 +89,7 @@ impl INode for HNode {
         let mut guard = self.open_file()?;
         let file = guard.as_mut().unwrap();
         try_std!(file.seek(SeekFrom::Start(offset as u64)));
-        let len = try_std!(file.read(buf));
+        let len = try_std!(file.read(buf)); // rsgx_fread
         Ok(len)
     }
 
@@ -101,6 +113,18 @@ impl INode for HNode {
     fn set_metadata(&self, metadata: &Metadata) -> Result<()> {
         warn!("HostFS: set_metadata() is unimplemented");
         Ok(())
+    }
+
+    fn get_fs_type(&self) -> Result<FsType> {
+        Ok(FsType::HOSTFS)
+    }
+
+    fn cache_needed(&self) -> bool {
+        true
+    }
+
+    fn get_inode_num(&self) -> Result<INodeId> {
+        Ok(self.uid)
     }
 
     fn sync_all(&self) -> Result<()> {
@@ -135,10 +159,12 @@ impl INode for HNode {
                 return Err(FsError::PermError);
             }
         }
+        let uid = get_uid_from_path(&new_path).unwrap();
         Ok(Arc::new(HNode {
             path: new_path,
             file: Mutex::new(None),
             fs: self.fs.clone(),
+            uid: uid,
         }))
     }
 
@@ -175,10 +201,12 @@ impl INode for HNode {
         if !new_path.exists() {
             return Err(FsError::EntryNotFound);
         }
+        let uid = get_uid_from_path(&new_path).unwrap();
         Ok(Arc::new(HNode {
             path: new_path,
             file: Mutex::new(None),
             fs: self.fs.clone(),
+            uid: uid,
         }))
     }
 

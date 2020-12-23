@@ -37,6 +37,7 @@ sgx1_exception_sim = [] # Simulate #PF and #GP exceptions on SGX 1
 dcap = []               # DCAP support. The compilation relies on DCAP package.
 
 [target.'cfg(not(target_env = "sgx"))'.dependencies]
+lru = "0.6.2"
 xmas-elf = { path = "../../deps/xmas-elf" }
 sgx_types = { path = "../../deps/rust-sgx-sdk/sgx_types" }
 sgx_tstd = { path = "../../deps/rust-sgx-sdk/sgx_tstd", features = ["backtrace"] }

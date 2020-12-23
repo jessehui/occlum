@@ -4,6 +4,7 @@ use std::intrinsics::atomic_store;
 use super::do_futex::futex_wake;
 use super::process::{Process, ProcessFilter};
 use super::{table, TermStatus, ThreadRef, ThreadStatus};
+use crate::cache::*;
 use crate::prelude::*;
 use crate::signal::{KernelSignal, SigNum};
 
@@ -90,6 +91,8 @@ fn exit_process(thread: &ThreadRef, term_status: TermStatus) {
     // The parent is the idle process
     if parent_inner.is_none() {
         debug_assert!(parent.pid() == 0);
+        CACHE_DIRTY_QUEUE.lock().unwrap().clean_all();
+        display_cache_ratio();
 
         let pid = process.pid();
         let main_tid = pid;

@@ -22,6 +22,7 @@ static int create_and_write_file(const char *file_path) {
     if (write(fd, WRITE_MSG, strlen(WRITE_MSG)) <= 0) {
         THROW_ERROR("failed to write to the file");
     }
+    fsync(fd);
     close(fd);
     return 0;
 }
