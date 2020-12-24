@@ -17,7 +17,7 @@ jobs:
     - name: Checkout target occlum-package-repo
       uses: actions/checkout@v2
       with:
-        repository: occlum/occlum-package-repos
+        repository: jessehui/occlum-package-repos
         ref: master
         path: occlum-package-repos
         persist-credentials: false # otherwise, the token used is the GITHUB_TOKEN, instead of your personal token
@@ -75,9 +75,9 @@ jobs:
       uses: ad-m/github-push-action@master
       with:
         github_token: ${{ secrets.PAT_TOKEN }}
-        branch: pre-release
+        branch: pre-release-test
         directory: occlum-package-repos
-        repository: occlum/occlum-package-repos
+        repository: jessehui/occlum-package-repos
         force: true
 
     - name: Wait for package repo to deploy
@@ -96,8 +96,8 @@ jobs:
           docker exec ubuntu bash -c "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates gnupg2 jq make gdb wget libfuse-dev libtool;
             echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu bionic main' | tee /etc/apt/sources.list.d/intel-sgx.list;
             wget -qO - https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | apt-key add -"
-          docker exec ubuntu bash -c "echo 'deb [arch=amd64] https://occlum.io/occlum-package-repos/debian bionic main' | tee /etc/apt/sources.list.d/occlum.list;
-            wget -qO - https://occlum.io/occlum-package-repos/debian/public.key | apt-key add -;"
+          docker exec ubuntu bash -c "echo 'deb [arch=amd64] https://jessehui.github.io/occlum-package-repos/debian bionic main' | tee /etc/apt/sources.list.d/occlum.list;
+            wget -qO - https://jessehui.github.io/occlum-package-repos/debian/public.key | apt-key add -;"
 
     - name: Install sgx dependencies and occlum
       run: docker exec ubuntu bash -c "apt-get update; apt-cache policy occlum; apt-get install -y occlum libsgx-uae-service libsgx-dcap-ql"
@@ -125,11 +125,11 @@ jobs:
         [occlum]
         name=occlum
         enabled=1
-        baseurl=https://occlum.io/occlum-package-repos/rpm-repo/
+        baseurl=https://jessehui.github.io/occlum-package-repos/rpm-repo/
         gpgcheck=1
         repo_gpgcheck=1
-        gpgkey=https://occlum.io/occlum-package-repos/rpm-repo/RPM-GPG-KEY-rpm-sign
-        gpgcakey=https://occlum.io/occlum-package-repos/rpm-repo/RPM-GPG-KEY-rpm-sign-ca
+        gpgkey=https://jessehui.github.io/occlum-package-repos/rpm-repo/RPM-GPG-KEY-rpm-sign
+        gpgcakey=https://jessehui.github.io/occlum-package-repos/rpm-repo/RPM-GPG-KEY-rpm-sign-ca
         EOF"
         docker exec centos bash -c "yum --showduplicate list -y occlum; yum install -y occlum"
 
