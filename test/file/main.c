@@ -69,6 +69,9 @@ static int __test_pwrite_pread(const char *file_path) {
     if (ret >= 0 || errno != EINVAL) {
         THROW_ERROR("check pwrite with negative offset fail");
     }
+
+    int length = lseek(fd, 0, SEEK_END);
+    printf("length of file is %d\n", length);
     close(fd);
     fd = open(file_path, O_RDONLY);
     if (fd < 0) {

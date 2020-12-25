@@ -57,23 +57,27 @@ impl File for INodeFile {
         let mut ub_start_offset = 0;
 
         trace!(
-            "start_pageid: {}, page_num: {}, read_len_remained: {}",
+            "start_pageid: {}, start_page_offset: {}, page_num: {}, read_len_remained: {}",
             page_start_id,
+            page_start_offset,
             page_num,
             read_len_remained
         );
         let mut len = 0;
         // try cache
+        // TODO: What if read offset is beyond the length of the page
         for page_id in page_start_id..page_start_id + page_num {
             trace!(
-                "user buffer start_offset in page {}: {}",
+                "page id: {}, page_start_offset: {}, user buffer start_offset: {}",
                 page_id,
+                page_start_offset,
                 ub_start_offset
             );
             READ_COUNTER.fetch_add(1, Ordering::SeqCst);
             let mut cache = global_cache.write().unwrap();
             if let Some(cache_entry) = cache.get((inode_num, page_id)) {
                 let entry = cache_entry.lock().unwrap();
+                trace!("cache hit. cache entry: {:?}", entry);
                 let kernel_buf = entry.buf;
                 let page_data_len = entry.data_len;
                 let cache_data_len = if page_start_offset + page_data_len > PAGE_SIZE {
@@ -82,7 +86,7 @@ impl File for INodeFile {
                     page_data_len - page_start_offset
                 };
                 // check length, don't overflow user's buffer
-                len = cmp::min(user_buf_len, cache_data_len);
+                len = cmp::min(read_len_remained, cache_data_len);
                 buf[ub_start_offset..ub_start_offset + len]
                     .copy_from_slice(&kernel_buf[page_start_offset..page_start_offset + len]);
                 ub_start_offset += len;
@@ -98,7 +102,7 @@ impl File for INodeFile {
                 len = if page_start_offset + read_len_remained > PAGE_SIZE {
                     PAGE_SIZE - page_start_offset
                 } else {
-                    read_len_remained - page_start_offset
+                    read_len_remained
                 };
                 // read a whole page
                 let mut data_len = self
@@ -114,6 +118,7 @@ impl File for INodeFile {
                 read_len_remained -= len;
                 let cache_entry =
                     CacheEntry::new(inode_num, self.inode.clone(), page_id, data_len, kernel_buf);
+                trace!("cache miss. new cache entry: {:?}", cache_entry);
                 // only first time read, the page_start_offset could be not-4K-aligned
                 page_start_offset = 0;
                 let cache_entry = cache_entry.get_arc();
@@ -178,8 +183,9 @@ impl File for INodeFile {
         let mut ub_start_offset = 0;
 
         trace!(
-            "start_pageid: {}, page_num: {}, write_len_remained: {}",
+            "start_pageid: {}, start_page_offset: {}, page_num: {}, write_len_remained: {}",
             page_start_id,
+            page_start_offset,
             page_num,
             write_len_remained
         );
@@ -187,8 +193,9 @@ impl File for INodeFile {
         // try cache
         for page_id in page_start_id..page_start_id + page_num {
             trace!(
-                "user buffer start_offset in page {}: {}",
+                "page id: {}, page_start_offset: {}, user buffer start_offset: {}",
                 page_id,
+                page_start_offset,
                 ub_start_offset
             );
             WRITE_COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -196,6 +203,7 @@ impl File for INodeFile {
             if let Some(cache_entry) = cache.get((inode_num, page_id)) {
                 // cache hit
                 let mut entry = cache_entry.lock().unwrap();
+                trace!("cache hit. cache entry: {:?}", entry);
                 len = if page_start_offset + write_len_remained > PAGE_SIZE {
                     PAGE_SIZE - page_start_offset
                 } else {
@@ -238,6 +246,7 @@ impl File for INodeFile {
                     kernel_buf,
                 );
                 cache_entry.set_dirty();
+                trace!("cache miss. new cache entry: {:?}", cache_entry);
                 let cache_entry = cache_entry.get_arc();
                 // only first time write, the page_start_offset could be not-4K-aligned
                 page_start_offset = 0;
