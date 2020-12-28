@@ -5,6 +5,7 @@
 //extern crate lru;
 
 use super::*;
+use crate::config::LIBOS_CONFIG;
 use crate::error::*;
 use crate::rcore_fs::vfs::{FsType, INode, Metadata};
 use lru::LruCache;
@@ -27,9 +28,6 @@ pub fn divide_page_size(num: usize) -> usize {
 // If data size is bigger than 1M, we don't cache it.
 pub const MAX_CACHE_LENGTH: usize = 256 * PAGE_SIZE;
 
-// TODO: make it configurable
-const CACHE_CAPACITY: usize = 32768; // 32K * 4K = 128M
-
 // Initial capacity for dirty_queue
 const DIRTY_QUEUE_INITIAL_SIZE: usize = 100;
 
@@ -44,9 +42,10 @@ pub static WRITE_CACHE_HIT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 // Global page-cache. One for each FS.
 // TODO: Use macro.
 lazy_static! {
-    pub static ref HOSTFS_CACHE: SgxRwLock<Cache> = SgxRwLock::new(Cache::new(CACHE_CAPACITY));
-    pub static ref SEFS_CACHE: SgxRwLock<Cache> = SgxRwLock::new(Cache::new(CACHE_CAPACITY));
-    pub static ref UNIONFS_CACHE: SgxRwLock<Cache> = SgxRwLock::new(Cache::new(CACHE_CAPACITY));
+    pub static ref CACHE_CAPACITY: usize = LIBOS_CONFIG.resource_limits.cache_size / 4096; // default 32K
+    pub static ref HOSTFS_CACHE: SgxRwLock<Cache> = SgxRwLock::new(Cache::new(*CACHE_CAPACITY));
+    pub static ref SEFS_CACHE: SgxRwLock<Cache> = SgxRwLock::new(Cache::new(*CACHE_CAPACITY));
+    pub static ref UNIONFS_CACHE: SgxRwLock<Cache> = SgxRwLock::new(Cache::new(*CACHE_CAPACITY));
     pub static ref METADATA_QUEUE: SgxRwLock<MetaDataCacheQueue> =
         SgxRwLock::new(MetaDataCacheQueue::new());
     pub static ref CACHE_DIRTY_QUEUE: SgxMutex<DirtyQueue> = SgxMutex::new(DirtyQueue::new());

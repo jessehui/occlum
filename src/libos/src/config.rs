@@ -95,6 +95,7 @@ pub struct Config {
 #[derive(Debug)]
 pub struct ConfigResourceLimits {
     pub user_space_size: usize,
+    pub cache_size: usize,
 }
 
 #[derive(Debug)]
@@ -171,7 +172,11 @@ impl Config {
 impl ConfigResourceLimits {
     fn from_input(input: &InputConfigResourceLimits) -> Result<ConfigResourceLimits> {
         let user_space_size = parse_memory_size(&input.user_space_size)?;
-        Ok(ConfigResourceLimits { user_space_size })
+        let cache_size = parse_memory_size(&input.cache_size)?;
+        Ok(ConfigResourceLimits {
+            user_space_size,
+            cache_size,
+        })
     }
 }
 
@@ -305,12 +310,14 @@ struct InputConfig {
 #[derive(Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 struct InputConfigResourceLimits {
-    #[serde(default = "InputConfigResourceLimits::get_user_space_size")]
+    #[serde(default = "InputConfigResourceLimits::get_default_size")]
     pub user_space_size: String,
+    #[serde(default = "InputConfigResourceLimits::get_default_size")]
+    pub cache_size: String,
 }
 
 impl InputConfigResourceLimits {
-    fn get_user_space_size() -> String {
+    fn get_default_size() -> String {
         "128MB".to_string()
     }
 }
@@ -318,7 +325,8 @@ impl InputConfigResourceLimits {
 impl Default for InputConfigResourceLimits {
     fn default() -> InputConfigResourceLimits {
         InputConfigResourceLimits {
-            user_space_size: InputConfigResourceLimits::get_user_space_size(),
+            user_space_size: InputConfigResourceLimits::get_default_size(),
+            cache_size: InputConfigResourceLimits::get_default_size(),
         }
     }
 }
