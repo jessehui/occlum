@@ -24,6 +24,7 @@ rcore-fs-unionfs = { path = "../../deps/sefs/rcore-fs-unionfs" }
 serde = { path = "../../deps/serde-sgx/serde", features = ["derive"] }
 serde_json = { path = "../../deps/serde-json-sgx" }
 memoffset = "0.6.1"
+scroll = { version = "0.10.2", default-features = false }
 
 [patch.'https://github.com/apache/teaclave-sgx-sdk.git']
 sgx_tstd = { path = "../../deps/rust-sgx-sdk/sgx_tstd" }
@@ -37,9 +38,9 @@ sgx1_exception_sim = [] # Simulate #PF and #GP exceptions on SGX 1
 dcap = []               # DCAP support. The compilation relies on DCAP package.
 
 [target.'cfg(not(target_env = "sgx"))'.dependencies]
-xmas-elf = { path = "../../deps/xmas-elf" }
 sgx_types = { path = "../../deps/rust-sgx-sdk/sgx_types" }
 sgx_tstd = { path = "../../deps/rust-sgx-sdk/sgx_tstd", features = ["backtrace"] }
 sgx_trts = { path = "../../deps/rust-sgx-sdk/sgx_trts" }
 sgx_tse = { path = "../../deps/rust-sgx-sdk/sgx_tse" }
 sgx_tcrypto = { path = "../../deps/rust-sgx-sdk/sgx_tcrypto" }
+goblin = { path = "../../deps/goblin", default-features = false, features = ["elf64", "elf32", "endian_fd"] }
