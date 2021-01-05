@@ -320,8 +320,13 @@ impl Cache {
         self.inner.put((inode_num, page_id), cache_entry);
     }
 
-    pub fn get(&mut self, (inode_num, page_id): (INodeId, usize)) -> Option<&CacheEntryRef> {
-        self.inner.get(&(inode_num, page_id))
+    pub fn get(&mut self, (inode_num, page_id): (INodeId, usize)) -> Option<CacheEntryRef> {
+        if let Some(entry) = self.inner.get(&(inode_num, page_id)) {
+            // Operations on cache entry will not need global cache lock
+            Some(entry.clone())
+        } else {
+            None
+        }
     }
 }
 

@@ -60,6 +60,7 @@ $(BUILD_TARGETS): %:
 
 postbuild:
 	@cd $(BUILD_DIR)/test && \
+		/bin/echo -n "abcdefghijklmn" > image/root/test_same_page.txt && \
 		$(BUILD_DIR)/bin/occlum build -f
 
 #############################################################################
