@@ -292,7 +292,7 @@ struct thread_arg {
 
 void *thread_read_miss (void *arg) {
     struct thread_arg *get_arg = (struct thread_arg *) arg;
-    char *file_str_base = "abcdefghijklmn\0";
+    char *file_str_base = "abcdefghijklmn";
 
     int offset = 0;
     // if (lseek(get_arg->fd, offset, SEEK_SET) != offset) {
@@ -302,9 +302,9 @@ void *thread_read_miss (void *arg) {
 
     // cache miss
     // this will take longer as a test
-    size_t len = read(get_arg->fd, get_arg->user_buf, 4096);
-    printf("read things: %s, read len = %d, str_len = %d\n", len, strlen(file_str_base),
-           get_arg->user_buf);
+    size_t len = pread(get_arg->fd, get_arg->user_buf, 4096, 0);
+    printf("read things: %s, read len = %d, str_len = %d\n", get_arg->user_buf, len,
+           strlen(file_str_base));
     if (len != strlen(file_str_base)) {
         printf("failed to read the msg from file\n");
         return NULL;
@@ -324,7 +324,7 @@ void *thread_read_miss (void *arg) {
 static int test_write_read_same_page_simutaniously () {
     printf("Test write read same page simutaniously:\n");
 
-    char *write_str_new = "ABCDEFGHIJKLMN\0";
+    char *write_str_new = "ABCDEFGHIJKLMN";
     int fd;
     char *file_path = "/root/test_same_page.txt";
     char *user_buf = malloc(4096);
@@ -348,12 +348,12 @@ static int test_write_read_same_page_simutaniously () {
     //     THROW_ERROR("failed to lseek the file");
     // }
     // this should cache miss and in the test read will wait for write to finish
-    if (write(fd, write_str_new, strlen(write_str_new)) <= 0) {
+    if (pwrite(fd, write_str_new, strlen(write_str_new), 0) <= 0) {
         THROW_ERROR("failed to write");
     }
 
     // wait for read to complete
-    sleep(1);
+    // sleep(1);
 
     // flush file cache
     fsync(fd);

@@ -1,9 +1,15 @@
 use super::*;
 use crate::cache::*;
+use crate::time::*;
 use rcore_fs_sefs::dev::SefsMac;
 use std::cmp;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
+// lazy_static! {
+//     static ref sync_1 :SgxMutex<bool> = SgxMutex::new(false);
+//     static ref sync_2 :SgxMutex<bool> = SgxMutex::new(false);
+// }
 pub struct INodeFile {
     inode: Arc<dyn INode>,
     abs_path: String,
@@ -77,6 +83,9 @@ impl File for INodeFile {
             if let Some(cache_entry) = cache.get((inode_num, page_id)) {
                 let entry = cache_entry.lock().unwrap();
                 trace!("cache hit. cache entry: {:?}", entry);
+
+                // Just drop global cache lock, although this entry might be dropped by other thread's cache insertion
+                drop(cache);
                 let kernel_buf = entry.buf;
                 let page_data_len = entry.data_len;
                 let cache_read_len = if page_start_offset + read_len_remained > PAGE_SIZE {
@@ -98,11 +107,6 @@ impl File for INodeFile {
                 // cache miss
                 drop(cache);
                 let mut kernel_buf = [0; PAGE_SIZE];
-                len = if page_start_offset + read_len_remained > PAGE_SIZE {
-                    PAGE_SIZE - page_start_offset
-                } else {
-                    read_len_remained
-                };
                 // read a whole page
                 let mut data_len = self
                     .inode
@@ -111,23 +115,55 @@ impl File for INodeFile {
                 if data_len == 0 {
                     break;
                 }
+
+                len = if page_start_offset + read_len_remained > PAGE_SIZE {
+                    PAGE_SIZE - page_start_offset
+                } else {
+                    read_len_remained
+                };
                 len = cmp::min(len, data_len - page_start_offset);
-                // copy len of kernel_buf to user buf
-                buf[ub_start_offset..ub_start_offset + len]
-                    .copy_from_slice(&kernel_buf[page_start_offset..page_start_offset + len]);
-                ub_start_offset += len;
-                read_len += len;
-                read_len_remained -= len;
+
                 let cache_entry =
                     CacheEntry::new(inode_num, self.inode.clone(), page_id, data_len, kernel_buf);
                 trace!("cache miss. new cache entry: {:?}", cache_entry);
+                let cache_entry = cache_entry.get_arc();
+                // get the global cache
+                let mut cache = global_cache.write().unwrap();
+
+                // Check the entry again to prevent other thread's write invalidation
+                if let Some(entry) = cache.get((inode_num, page_id)) {
+                    // If there is an entry existed, other thread could write to this entry
+                    // Then we don't insert and just use this entry
+                    let cache_buf = &entry.lock().unwrap().buf;
+                    buf[ub_start_offset..ub_start_offset + len]
+                        .copy_from_slice(&cache_buf[page_start_offset..page_start_offset + len]);
+                } else {
+                    cache.insert((inode_num, page_id), cache_entry);
+                    drop(cache);
+                    // copy len of kernel_buf to user buf
+                    buf[ub_start_offset..ub_start_offset + len]
+                        .copy_from_slice(&kernel_buf[page_start_offset..page_start_offset + len]);
+                }
+
+                // // Only Test
+                // let mut test_1 = sync_1.lock().unwrap();
+                // *test_1 = true;
+                // drop(test_1);
+
+                // while true {
+                //     let test_1 = sync_1.lock().unwrap();
+                //     if *test_1 == false {
+                //         break;
+                //     } else {
+                //         drop(test_1);
+                //     }
+                // };
+
+                ub_start_offset += len;
+                read_len += len;
+                read_len_remained -= len;
                 // only first time read, the page_start_offset could be not-4K-aligned
                 page_start_offset = 0;
-                let cache_entry = cache_entry.get_arc();
-                global_cache
-                    .write()
-                    .unwrap()
-                    .insert((inode_num, page_id), cache_entry);
             }
             trace!(
                 "this time read_len: {}, overall read_len: {}, read_len_remained: {}",
@@ -138,8 +174,11 @@ impl File for INodeFile {
         }
 
         // TODO: Do pre-read
+
         // The user buffer could be bigger than the real content.
+        // This assertion could fail.
         //debug_assert!(read_len_remained == 0);
+
         Ok(read_len)
     }
 
@@ -205,6 +244,8 @@ impl File for INodeFile {
                 // cache hit
                 let mut entry = cache_entry.lock().unwrap();
                 trace!("cache hit. cache entry: {:?}", entry);
+                // Just drop global cache lock, although this entry might be dropped by other thread's cache insertion
+                drop(cache);
                 len = if page_start_offset + write_len_remained > PAGE_SIZE {
                     PAGE_SIZE - page_start_offset
                 } else {
@@ -227,6 +268,17 @@ impl File for INodeFile {
             } else {
                 // cache miss
                 drop(cache);
+
+                // // Only Test
+                // while true {
+                //     let test_1 = sync_1.lock().unwrap();
+                //     if *test_1 == true {
+                //         break;
+                //     } else {
+                //         drop(test_1);
+                //     }
+                // };
+
                 let mut kernel_buf = [0; PAGE_SIZE];
                 len = if page_start_offset + write_len_remained > PAGE_SIZE {
                     PAGE_SIZE - page_start_offset
@@ -259,6 +311,9 @@ impl File for INodeFile {
                     .lock()
                     .unwrap()
                     .push(inode_num, cache_entry);
+
+                // let mut test_1 = sync_1.lock().unwrap();
+                // *test_1 = false;
             }
             trace!(
                 "this time write_len: {}, overall write_len: {}, write_len_remained: {}",
