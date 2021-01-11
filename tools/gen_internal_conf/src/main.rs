@@ -133,14 +133,24 @@ fn main() {
         return;
     }
 
+    // get the kernel cache size
+    let cache_size = parse_memory_size(&occlum_config.resource_limits.cache_size);
+    if cache_size.is_err() {
+        println!(
+            "The cache_size \"{}\" is not correct.",
+            occlum_config.resource_limits.cache_size
+        );
+        return;
+    }
+
     // Generate the enclave configuration
     let sgx_enclave_configuration = EnclaveConfiguration {
         ProdID: occlum_config.metadata.product_id,
         ISVSVN: occlum_config.metadata.version_number,
         StackMaxSize: stack_max_size.unwrap() as u64,
         StackMinSize: stack_max_size.unwrap() as u64, // just use the same size as max size
-        HeapMaxSize: heap_max_size.unwrap() as u64,
-        HeapMinSize: heap_max_size.unwrap() as u64, // just use the same size as max size
+        HeapMaxSize: heap_max_size.unwrap() as u64 + cache_size.unwrap() as u64 * 3, // hostfs, unionFS, SEFS
+        HeapMinSize: heap_max_size.unwrap() as u64 + cache_size.unwrap() as u64, // just use the same size as max size
         TCSNum: occlum_config.resource_limits.max_num_of_threads,
         TCSPolicy: 1,
         DisableDebug: match occlum_config.metadata.debuggable {
@@ -162,6 +172,7 @@ fn main() {
     let internal_occlum_json_config = InternalOcclumJson {
         resource_limits: InternalResourceLimits {
             user_space_size: occlum_config.resource_limits.user_space_size.to_string(),
+            cache_size: occlum_config.resource_limits.cache_size.to_string(),
         },
         process: OcclumProcess {
             default_stack_size: occlum_config.process.default_stack_size,
@@ -258,6 +269,10 @@ fn gen_mount_config(occlum_conf_root_fs_mac: String) -> serde_json::Value {
                 "options": {
                     "temporary": true
                 }
+            },
+            {
+                "target": "/tmpfs",
+                "type": "ramfs"
             }
         ]
     });
@@ -300,6 +315,7 @@ struct OcclumResourceLimits {
     kernel_space_heap_size: String,
     kernel_space_stack_size: String,
     user_space_size: String,
+    cache_size: String
 }
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -339,6 +355,7 @@ struct EnclaveConfiguration {
 #[derive(Debug, PartialEq, Serialize)]
 struct InternalResourceLimits {
     user_space_size: String,
+    cache_size: String,
 }
 
 #[derive(Debug, PartialEq, Serialize)]

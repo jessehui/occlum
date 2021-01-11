@@ -24,6 +24,7 @@ static int create_file_with_content(const char *file_path, const char *msg) {
             THROW_ERROR("failed to write to the file");
         }
     }
+    fsync(fd);
     close(fd);
     return 0;
 }

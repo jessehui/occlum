@@ -2,6 +2,8 @@
 #include <sys/uio.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <stdlib.h>
 #include "test_fs.h"
 
 // ============================================================================
@@ -69,9 +71,6 @@ static int __test_pwrite_pread(const char *file_path) {
     if (ret >= 0 || errno != EINVAL) {
         THROW_ERROR("check pwrite with negative offset fail");
     }
-
-    int length = lseek(fd, 0, SEEK_END);
-    printf("length of file is %d\n", length);
     close(fd);
     fd = open(file_path, O_RDONLY);
     if (fd < 0) {
@@ -198,15 +197,187 @@ static int test_lseek() {
     return test_file_framework(__test_lseek);
 }
 
+static int test_write_read_hostfs () {
+    printf("Test hostfs:");
+    char *write_str = "Hello World\n";
+    int fd;
+    char *file_path = "/host/test_file.txt";
+
+    fd = open(file_path, O_CREAT | O_WRONLY);
+    if (fd < 0) {
+        THROW_ERROR("failed to open a file to write");
+    }
+    if (write(fd, write_str, strlen(write_str)) <= 0) {
+        THROW_ERROR("failed to write");
+    }
+    close(fd);
+
+    if (fs_check_file_content(file_path, write_str) < 0) {
+        THROW_ERROR("failed to check file content");
+    }
+
+    return 0;
+}
+
+static int test_write_read_sefs () {
+    printf("Test sefs:");
+    char *write_str = "Hello World\n";
+    int fd;
+    char *file_path = "/tmp/test_file.txt";
+
+    fd = open(file_path, O_CREAT | O_WRONLY);
+    if (fd < 0) {
+        THROW_ERROR("failed to open a file to write");
+    }
+    if (write(fd, write_str, strlen(write_str)) <= 0) {
+        THROW_ERROR("failed to write");
+    }
+    close(fd);
+
+    if (fs_check_file_content(file_path, write_str) < 0) {
+        THROW_ERROR("failed to check file content");
+    }
+
+    return 0;
+}
+
+static int test_write_read_ramfs () {
+    printf("Test ramfs:");
+    char *write_str = "Hello World\n";
+    int fd;
+    char *file_path = "/tmpfs/test_file.txt";
+
+    fd = open(file_path, O_CREAT | O_WRONLY);
+    if (fd < 0) {
+        THROW_ERROR("failed to open a file to write");
+    }
+    if (write(fd, write_str, strlen(write_str)) <= 0) {
+        THROW_ERROR("failed to write");
+    }
+    close(fd);
+
+    if (fs_check_file_content(file_path, write_str) < 0) {
+        THROW_ERROR("failed to check file content");
+    }
+
+    return 0;
+}
+
+static int test_write_read_unionfs () {
+    printf("Test unionfs:");
+    char *write_str = "Hello World\n";
+    int fd;
+    char *file_path = "/root/test_file.txt";
+
+    fd = open(file_path, O_CREAT | O_WRONLY);
+    if (fd < 0) {
+        THROW_ERROR("failed to open a file to write");
+    }
+    if (write(fd, write_str, strlen(write_str)) <= 0) {
+        THROW_ERROR("failed to write");
+    }
+    close(fd);
+
+    if (fs_check_file_content(file_path, write_str) < 0) {
+        THROW_ERROR("failed to check file content");
+    }
+
+    return 0;
+}
+
+struct thread_arg {
+    char *user_buf;
+    int fd;
+};
+
+void *thread_read_miss (void *arg) {
+    struct thread_arg *get_arg = (struct thread_arg *) arg;
+    char *file_str_base = "abcdefghijklmn";
+
+    int offset = 0;
+    // if (lseek(get_arg->fd, offset, SEEK_SET) != offset) {
+    //     printf("failed to lseek the file\n");
+    //     return NULL;
+    // }
+
+    // cache miss
+    // this will take longer as a test
+    size_t len = pread(get_arg->fd, get_arg->user_buf, 4096, 0);
+    printf("read things: %s, read len = %d, str_len = %d\n", get_arg->user_buf, len,
+           strlen(file_str_base));
+    if (len != strlen(file_str_base)) {
+        printf("failed to read the msg from file\n");
+        return NULL;
+    }
+
+    // it will get what the file is (write should be invalid)
+    if (strcmp(file_str_base, get_arg->user_buf) != 0) {
+        printf("the message read from the file is not expected\n");
+        return NULL;
+    }
+
+    printf("read original success\n");
+
+    return NULL;
+}
+
+static int test_write_read_same_page_simutaniously () {
+    printf("Test write read same page simutaniously:\n");
+
+    char *write_str_new = "ABCDEFGHIJKLMN";
+    int fd;
+    char *file_path = "/root/test_same_page.txt";
+    char *user_buf = malloc(4096);
+
+    struct thread_arg *arg = (struct thread_arg *)malloc(sizeof(struct thread_arg));
+    arg->user_buf = user_buf;
+    fd = open(file_path, O_RDWR);
+    if (fd < 0) {
+        THROW_ERROR("failed to open a file to write");
+    }
+
+    arg->fd = fd;
+
+    pthread_t child = 0;
+    if (pthread_create(&child, NULL, &thread_read_miss, arg) != 0) {
+        THROW_ERROR("create child thread failed");
+    }
+
+    int offset = 0;
+    // if (lseek(fd, offset, SEEK_SET) != offset) {
+    //     THROW_ERROR("failed to lseek the file");
+    // }
+    // this should cache miss and in the test read will wait for write to finish
+    if (pwrite(fd, write_str_new, strlen(write_str_new), 0) <= 0) {
+        THROW_ERROR("failed to write");
+    }
+
+    // wait for read to complete
+    // sleep(1);
+
+    // flush file cache
+    fsync(fd);
+
+    if (fs_check_file_content(file_path, write_str_new) < 0) {
+        printf("This should fail\n");
+        THROW_ERROR("failed to check file content");
+    }
+
+    return 0;
+}
+
 // ============================================================================
 // Test suite main
 // ============================================================================
 
 static test_case_t test_cases[] = {
-    TEST_CASE(test_write_read),
-    TEST_CASE(test_pwrite_pread),
-    TEST_CASE(test_writev_readv),
-    TEST_CASE(test_lseek),
+    // TEST_CASE(test_write_read_hostfs),
+    // TEST_CASE(test_write_read_ramfs),
+    // TEST_CASE(test_write_read_sefs),
+    // TEST_CASE(test_write_read_unionfs),
+    TEST_CASE(test_write_read_same_page_simutaniously),
+    // TEST_CASE(test_writev_readv),
+    // TEST_CASE(test_lseek),
 };
 
 int main(int argc, const char *argv[]) {

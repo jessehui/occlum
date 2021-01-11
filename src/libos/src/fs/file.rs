@@ -19,8 +19,17 @@ pub trait File: Debug + Sync + Send + Any {
         return_op_unsupported_error!("read")
     }
 
+    /// Try cache first if there is one and then fallback to read_at.
+    fn do_read_at(&self, offset: usize, buf: &mut [u8]) -> Result<usize> {
+        self.read_at(offset, buf)
+    }
+
     fn write(&self, buf: &[u8]) -> Result<usize> {
         return_op_unsupported_error!("write")
+    }
+
+    fn do_write_at(&self, offset: usize, buf: &[u8]) -> Result<usize> {
+        self.write_at(offset, buf)
     }
 
     fn read_at(&self, offset: usize, buf: &mut [u8]) -> Result<usize> {
