@@ -1091,6 +1091,135 @@ int test_mprotect_with_non_page_aligned_size() {
     return 0;
 }
 
+int check_file_first_four_page(char *file_path, int first_page_val, int secend_page_val,
+                               int third_page_val, int fourth_page_val) {
+    int fd = open(file_path, O_RDONLY);
+    if (fd < 0) {
+        THROW_ERROR("file open failed");
+    }
+    if (check_file_with_repeated_bytes(fd, PAGE_SIZE, first_page_val) < 0) {
+        THROW_ERROR("unexpected file content");
+    }
+    if (check_file_with_repeated_bytes(fd, PAGE_SIZE, secend_page_val) < 0) {
+        THROW_ERROR("unexpected file content");
+    }
+
+    if (check_file_with_repeated_bytes(fd, PAGE_SIZE, third_page_val) < 0) {
+        THROW_ERROR("unexpected file content\n");
+    }
+
+    if (check_file_with_repeated_bytes(fd, PAGE_SIZE, fourth_page_val) < 0) {
+        THROW_ERROR("unexpectbed file content");
+    }
+    close(fd);
+    return 0;
+}
+
+int test_file_backed_mremap() {
+    int prot = PROT_READ | PROT_WRITE;
+    size_t len = PAGE_SIZE;
+    char *file_path = "/tmp/test";
+    int byte_val_1 = 0xab;
+    int byte_val_2 = 0xcd;
+    int byte_val_3 = 0xef;
+
+    remove(file_path);
+    int fd = open(file_path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        THROW_ERROR("open file error");
+    }
+    fallocate(fd, 0, 0, len * 4);
+    fill_file_with_repeated_bytes(fd, PAGE_SIZE, byte_val_1);
+
+    void *buf = mmap(0, len, prot, MAP_SHARED, fd, 0);
+    if (buf == MAP_FAILED) {
+        THROW_ERROR("mmap failed");
+    }
+
+    void *expand_buf = mremap(buf, len, 2 * len, 0);
+    if (expand_buf == MAP_FAILED) {
+        THROW_ERROR("mremap with big size failed");
+    }
+    for (int i = PAGE_SIZE; i < PAGE_SIZE * 2; i++) { ((char *)expand_buf)[i] = byte_val_2; }
+
+    expand_buf = mremap(expand_buf, len * 2, 4 * len, MREMAP_MAYMOVE);
+    if (expand_buf == MAP_FAILED) {
+        THROW_ERROR("mremap with more big size failed");
+    }
+    for (int i = PAGE_SIZE * 3; i < PAGE_SIZE * 4; i++) { ((char *)expand_buf)[i] = byte_val_3; }
+
+    int rc = msync(expand_buf, 4 * len, MS_SYNC);
+    if (rc < 0) {
+        THROW_ERROR("msync failed");
+    }
+    rc = munmap(expand_buf, 4 * len);
+    if (rc < 0) {
+        THROW_ERROR("munmap failed");
+    }
+    close(fd);
+
+    return check_file_first_four_page(file_path, byte_val_1, byte_val_2, 0, byte_val_3);
+}
+
+int test_file_backed_mremap_mem_may_move() {
+    int prot = PROT_READ | PROT_WRITE;
+    size_t len = PAGE_SIZE;
+    char *file_path = "/tmp/test";
+    int byte_val_orig = 0xff;
+    int byte_val_1 = 0xab;
+    int byte_val_2 = 0xcd;
+    int byte_val_3 = 0xef;
+
+    remove(file_path);
+    int fd = open(file_path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (fd < 0) {
+        THROW_ERROR("open file error");
+    }
+    fallocate(fd, 0, 0, len * 4);
+    fill_file_with_repeated_bytes(fd, PAGE_SIZE, byte_val_orig);
+
+    void *buf = mmap(0, len, prot, MAP_SHARED, fd, 0);
+    if (buf == MAP_FAILED) {
+        THROW_ERROR("mmap failed");
+    }
+    for (int i = 0; i < PAGE_SIZE; i++) { ((char *)buf)[i] = byte_val_1; }
+
+    // Allocate a gap buffer to make sure mremap buf must move to a new range
+    unsigned long gap_buf = (unsigned long) buf + PAGE_SIZE;
+    assert(gap_buf % PAGE_SIZE == 0);
+    void *ret = mmap((void *)gap_buf, PAGE_SIZE, prot, MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
+    if ((unsigned long)ret != gap_buf) {
+        THROW_ERROR("mmap gap_buf with prefered address failed");
+    }
+
+    void *expand_buf = mremap(buf, len, 2 * len, MREMAP_MAYMOVE);
+    if (expand_buf == MAP_FAILED) {
+        THROW_ERROR("mremap with big size failed");
+    }
+    for (int i = PAGE_SIZE; i < PAGE_SIZE * 2; i++) { ((char *)expand_buf)[i] = byte_val_2; }
+
+    // Mremap to a new fixed address
+    unsigned long fixed_addr = (unsigned long) expand_buf + 2 * PAGE_SIZE;
+    ret = mremap(expand_buf, len * 2, 4 * len, MREMAP_FIXED | MREMAP_MAYMOVE,
+                 (void *)fixed_addr);
+    if ((unsigned long)ret != fixed_addr) {
+        THROW_ERROR("mremap with fixed address and more big size failed");
+    }
+    for (int i = PAGE_SIZE * 3; i < PAGE_SIZE * 4; i++) { ((char *)fixed_addr)[i] = byte_val_3; }
+
+    int rc = msync((void *)fixed_addr, 4 * len, MS_SYNC);
+    if (rc < 0) {
+        THROW_ERROR("msync failed");
+    }
+    rc = munmap((void *)fixed_addr, 4 * len);
+    if (rc < 0) {
+        THROW_ERROR("munmap failed");
+    }
+    close(fd);
+
+    return check_file_first_four_page(file_path, byte_val_1, byte_val_2, 0, byte_val_3);;
+}
+
 // ============================================================================
 // Test suite main
 // ============================================================================
@@ -1124,6 +1253,8 @@ static test_case_t test_cases[] = {
     TEST_CASE(test_mremap),
     TEST_CASE(test_mremap_subrange),
     TEST_CASE(test_mremap_with_fixed_addr),
+    TEST_CASE(test_file_backed_mremap),
+    TEST_CASE(test_file_backed_mremap_mem_may_move),
     TEST_CASE(test_mprotect_once),
     TEST_CASE(test_mprotect_twice),
     TEST_CASE(test_mprotect_triple),
