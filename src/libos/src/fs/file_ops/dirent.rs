@@ -8,7 +8,10 @@ pub fn do_getdents(fd: FileDesc, buf: &mut [u8]) -> Result<usize> {
     getdents_common::<()>(fd, buf)
 }
 
-fn getdents_common<T: DirentType + Copy + Default>(fd: FileDesc, buf: &mut [u8]) -> Result<usize> {
+fn getdents_common<T: DirentType + Copy + Default + core::fmt::Debug>(
+    fd: FileDesc,
+    buf: &mut [u8],
+) -> Result<usize> {
     debug!(
         "getdents: fd: {}, buf: {:?}, buf_size: {}",
         fd,
@@ -33,6 +36,7 @@ fn getdents_common<T: DirentType + Copy + Default>(fd: FileDesc, buf: &mut [u8])
             }
             Ok(name) => name,
         };
+        trace!("name = {:?}", name);
         // TODO: get ino from dirent
         let dirent = LinuxDirent::<T>::new(1, &name);
         if let Err(e) = writer.try_write(&dirent, &name) {
@@ -43,10 +47,12 @@ fn getdents_common<T: DirentType + Copy + Default>(fd: FileDesc, buf: &mut [u8])
                 break;
             }
         }
+        trace!("dirent = {:?}", dirent);
     }
     Ok(writer.written_size)
 }
 
+#[derive(Debug)]
 #[repr(packed)] // Don't use 'C'. Or its size will align up to 8 bytes.
 struct LinuxDirent<T: DirentType + Copy + Default> {
     /// Inode number

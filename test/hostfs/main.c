@@ -99,7 +99,10 @@ static int __test_readdir(const char *file_path) {
             }
             break;
         }
+        printf("dp->d_name = %s\n", dp->d_name );
+        printf("base_name = %s\n", base_name);
         if (strncmp(base_name, dp->d_name, strlen(base_name)) == 0) {
+            printf("[SAME]\n");
             found = true;
         }
     }
