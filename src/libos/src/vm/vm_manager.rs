@@ -140,6 +140,10 @@ impl VMMapOptions {
         &self.addr
     }
 
+    pub fn align(&self) -> &usize {
+        &self.align
+    }
+
     pub fn perms(&self) -> &VMPerms {
         &self.perms
     }
@@ -293,12 +297,15 @@ impl VMManager {
     }
 
     // This is used to set the mmap prefered start address for VMManager
+    // Set mmap prefered start addr only to higher value
     pub fn set_mmap_prefered_start_addr(&mut self, addr: usize) {
-        self.mmap_prefered_start_addr = addr
+        if addr > self.mmap_prefered_start_addr {
+            self.mmap_prefered_start_addr = addr;
+        }
     }
 
     pub fn mmap(&mut self, mut options: VMMapOptions) -> Result<usize> {
-        // TODO: respect options.align when mmap
+        // TODO: respect options.align when mmap especially for elf (usally 2M)
         let addr = *options.addr();
         let size = *options.size();
 
@@ -325,7 +332,8 @@ impl VMManager {
 
         // After initializing, we can safely insert the new VMA
         self.insert_new_vma(insert_idx, new_vma);
-
+        let usage = self.usage_percentage();
+        debug!("Current memory usage is {}%", usage * 100 as f32);
         Ok(new_addr)
     }
 
@@ -381,6 +389,8 @@ impl VMManager {
             })
             .collect();
         self.vmas = new_vmas;
+        let usage = self.usage_percentage();
+        debug!("Current memory usage is {}%", usage * 100 as f32);
         Ok(())
     }
 
