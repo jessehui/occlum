@@ -3,6 +3,7 @@ use crate::prelude::*;
 use crate::process::ThreadRef;
 use crate::syscall::exception_interrupt_syscall_c_abi;
 use crate::syscall::{CpuContext, FpRegs, SyscallNum};
+use crate::vm::USER_SPACE_VM_MANAGER;
 use aligned::{Aligned, A16};
 use core::arch::x86_64::_fxsave;
 
@@ -85,11 +86,23 @@ extern "C" {
 
 pub fn enable_current_thread() {
     // Interruptible range
+    // let (addr, size) = {
+    //     let thread = current!();
+    //     let vm = thread.vm();
+    //     let range = vm.get_process_range();
+    //     (range.start(), range.size())
+    // };
+
+    // Interruptible range is whole user space range
+
     let (addr, size) = {
-        let thread = current!();
-        let vm = thread.vm();
-        let range = vm.get_process_range();
-        (range.start(), range.size())
+        let vm_range = USER_SPACE_VM_MANAGER
+            .vm_manager()
+            .lock()
+            .unwrap()
+            .range()
+            .clone();
+        (vm_range.start(), vm_range.size())
     };
     unsafe {
         let status = sgx::sgx_interrupt_enable(addr, size);
@@ -100,6 +113,7 @@ pub fn enable_current_thread() {
 pub fn disable_current_thread() {
     unsafe {
         let status = sgx::sgx_interrupt_disable();
+        println!("status = {:?}", status);
         assert!(status == sgx_status_t::SGX_SUCCESS);
     }
 }

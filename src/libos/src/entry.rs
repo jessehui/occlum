@@ -13,6 +13,7 @@ use crate::time::up_time::init;
 use crate::util::log::LevelFilter;
 use crate::util::mem_util::from_untrusted::*;
 use crate::util::sgx::allow_debug as sgx_allow_debug;
+use crate::vm::USER_SPACE_VM_MANAGER;
 use sgx_tse::*;
 
 pub static mut INSTANCE_DIR: String = String::new();
@@ -83,6 +84,10 @@ pub extern "C" fn occlum_ecall_init(log_level: *const c_char, instance_dir: *con
 
         // Enable global backtrace
         unsafe { backtrace::enable_backtrace(&ENCLAVE_PATH, PrintFormat::Short) };
+
+        // USER_SPACE_VM_MANAGER.init();
+
+        // interrupt::enable_current_thread();
     });
 
     0
