@@ -13,7 +13,7 @@ const MAX_QUEUED_MEMSET_REQS: usize = 1_000;
 lazy_static! {
 // Clean all munmapped ranges before exit
     // pub static ref VM_CLEAN_DONE: Arc<SgxMutex<bool>> = Arc::new(SgxMutex::new(false)); // safe between threads
-    pub static ref MPMC: (Sender<VMRange>, Receiver<VMRange>) = flume::unbounded();
+    pub static ref MPMC: (Sender<VMRange>, Receiver<VMRange>) = flume::bounded(MAX_QUEUED_MEMSET_REQS);
     pub static ref CLEAN_REQ_QUEUE: &'static Sender<VMRange> = &(*MPMC).0;
     pub static ref CLEAN_RUNNER: &'static Receiver<VMRange> = &(*MPMC).1;
 }

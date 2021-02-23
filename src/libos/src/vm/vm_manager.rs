@@ -518,9 +518,9 @@ impl VMManager {
                 }
         */
         // free list and vmas must be updated together
-        // unsafe {
-        //     self.spin_lock.0.lock();
-        // }
+        unsafe {
+            self.spin_lock.0.lock();
+        }
         // Allocate a new range for this mmap request
         let free_range = self.free.find_free_range(size, addr);
         if let Err(e) = free_range {
@@ -533,16 +533,20 @@ impl VMManager {
         let new_free_range = free_range.unwrap();
         let new_addr = new_free_range.start();
         let writeback_file = options.writeback_file.take();
-        let new_vma = VMArea::new(new_free_range, *options.perms(), writeback_file);
+        let new_vma = make_vma_obj(VMArea::new(
+            new_free_range,
+            *options.perms(),
+            writeback_file,
+        ));
 
         // Initialize the memory of the new range
         unsafe {
-            let buf = new_vma.as_slice_mut();
+            let buf = new_vma.vma.as_slice_mut();
             options.initializer.init_slice(buf)?;
         }
         // Set memory permissions
         if !options.perms.is_default() {
-            Self::apply_perms(&new_vma, new_vma.perms());
+            Self::apply_perms(&new_vma.vma, new_vma.vma.perms());
         }
 
         trace!("mmap range: {:?}", new_free_range);
@@ -550,10 +554,10 @@ impl VMManager {
         // After initializing, we can safely insert the new VMA
         //let mut insert_idx: usize = 0;
         //let vmas = self.vmas.lock().unwrap();
-        self.vmas.lock().unwrap().insert(make_vma_obj(new_vma));
-        // unsafe {
-        //     self.spin_lock.0.unlock();
-        // }
+        self.vmas.lock().unwrap().insert(new_vma);
+        unsafe {
+            self.spin_lock.0.unlock();
+        }
         //_println!("new vmas: {:?}", self.vmas.lock().unwrap());
         Ok(new_addr)
     }
@@ -647,7 +651,7 @@ impl VMManager {
         // }
         drop(vmas);
         //_println!("vmas after munmap: {:?}", self.vmas.lock().unwrap());
-        CLEAN_REQ_QUEUE.send(munmap_range);
+        CLEAN_REQ_QUEUE.send_async(munmap_range);
 
         Ok(())
     }
