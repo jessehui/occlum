@@ -528,6 +528,8 @@ impl VMManager {
             unsafe {
                 self.spin_lock.0.unlock();
             }
+            // let usage = self.usage_percentage();
+            // println!("used size = 0x{:x}, total_size = 0x{:x}, used percentage = {} ", usage.0, usage.1, usage.2);
             return_errno!(e.errno(), "find free range error");
         }
         let new_free_range = free_range.unwrap();
@@ -662,7 +664,7 @@ impl VMManager {
         // let bound = dirty_range.start();
         // let containing_vma = vmas.upper_bound(Bound::Included(&bound))
         *self.cleaning_range.lock().unwrap() = Some(dirty_range);
-        dirty_range.clean();
+        // dirty_range.clean();
         unsafe {
             self.spin_lock.0.lock();
         }
@@ -1010,17 +1012,17 @@ impl VMManager {
         return Ok(region.get().unwrap().vma.range().clone());
     }
 
-    // pub fn usage_percentage(&self) -> f32 {
-    //     let totol_size = self.range.size();
-    //     let mut used_size = 0;
-    //     self.vmas
-    //         .lock()
-    //         .unwrap()
-    //         .iter()
-    //         .for_each(|vma| used_size += vma.size());
+    pub fn usage_percentage(&self) -> (usize, usize, f32) {
+        let totol_size = self.range.size();
+        let mut used_size = 0;
+        self.vmas
+            .lock()
+            .unwrap()
+            .iter()
+            .for_each(|obj| used_size += obj.vma.size());
 
-    //     return used_size as f32 / totol_size as f32;
-    // }
+        return (used_size, totol_size, used_size as f32 / totol_size as f32);
+    }
 
     // Find a VMA that contains the given range, returning the VMA's index
     // fn find_containing_vma_idx(&self, target_range: &VMRange) -> Option<usize> {
