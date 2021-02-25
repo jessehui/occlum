@@ -588,6 +588,8 @@ impl VMManager {
                 Self::apply_perms(&intersection_vma, VMPerms::default());
             }
 
+            CLEAN_REQ_QUEUE.send(intersection_vma.range().clone());
+
             if vma.range() == intersection_vma.range() {
                 containing_vma.remove();
                 continue;
@@ -614,16 +616,13 @@ impl VMManager {
         unsafe {
             self.spin_lock.0.unlock();
         }
-        CLEAN_REQ_QUEUE.send(munmap_range);
 
         Ok(())
     }
 
     pub fn clean_dirty_range(&self, dirty_range: VMRange) -> Result<()> {
-        // FIXME: Check if there is intersect part that is in vmas (using)
-        // let vmas = self.vmas.lock().unwrap();
-        // let bound = dirty_range.start();
-        // let containing_vma = vmas.upper_bound(Bound::Included(&bound))
+        let bound = dirty_range.start();
+
         //println!("bgthread cleaning range: {:?}", dirty_range);
         self.cleaning_ranges.lock().unwrap().insert(dirty_range);
         dirty_range.clean();
@@ -635,7 +634,57 @@ impl VMManager {
         self.cleaning_ranges.lock().unwrap().remove(&dirty_range);
         unsafe {
             self.spin_lock.0.unlock();
+        };
+        Ok(())
+    }
+
+    pub fn clean_dirty_range_safe(&self, dirty_range: VMRange) -> Result<()> {
+        // Check if there is intersect part that is in vmas (using)
+        let bound = dirty_range.start();
+        // println!("dirty range = {:?}", dirty_range);
+        let mut sub_dirty_ranges = vec![];
+        let mut vmas = self.vmas.lock().unwrap();
+        // println!("vmas shown cleaning thread = {:?}", vmas);
+        let mut containing_vma = vmas.upper_bound_mut(Bound::Included(&bound));
+        debug_assert!(containing_vma.get().unwrap().vma.start() <= bound);
+        while !containing_vma.is_null()
+            && containing_vma.get().unwrap().vma.start() <= dirty_range.end()
+        {
+            let vma = &containing_vma.get().unwrap().vma;
+            if vma.size() == 0 {
+                containing_vma.move_next();
+                continue;
+            }
+
+            let intersection_vma = match vma.intersect(&dirty_range) {
+                None => {
+                    containing_vma.move_next();
+                    continue;
+                }
+                Some(intersection_vma) => intersection_vma,
+            };
+
+            // the intersection vma has already mapped and is in used
+            // println!("vma = {:?}, intersection_vma = {:?}", vma, intersection_vma);
+            debug_assert!(dirty_range.is_superset_of(vma));
+            sub_dirty_ranges = dirty_range.subtract(&intersection_vma);
         }
+        drop(vmas);
+
+        //println!("bgthread cleaning range: {:?}", dirty_range);
+        sub_dirty_ranges.iter().for_each(|range| {
+            self.cleaning_ranges.lock().unwrap().insert(*range);
+            range.clean();
+            unsafe {
+                self.spin_lock.0.lock();
+            }
+            self.free.add_clean_range_back_to_free_manager(*range);
+            // println!("[_bgthread_] after clean free list: {:?}", self.free);
+            self.cleaning_ranges.lock().unwrap().remove(range);
+            unsafe {
+                self.spin_lock.0.unlock();
+            }
+        });
         Ok(())
     }
 

@@ -134,7 +134,10 @@ impl VMRange {
     pub fn intersect(&self, other: &VMRange) -> Option<VMRange> {
         let intersection_start = self.start().max(other.start());
         let intersection_end = self.end().min(other.end());
-        if intersection_start > intersection_end {
+        if intersection_start > intersection_end
+            || self.start() == other.end()
+            || self.end() == other.start()
+        {
             return None;
         }
         unsafe {
