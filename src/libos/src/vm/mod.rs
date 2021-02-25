@@ -18,7 +18,10 @@ use self::vm_manager::{VMManager, VMMapOptionsBuilder};
 
 pub use self::process_vm::{MMapFlags, MRemapFlags, MSyncFlags, ProcessVM, ProcessVMBuilder};
 pub use self::user_space_vm::USER_SPACE_VM_MANAGER;
-pub use self::vm_clean_thread::{init_vm_clean_thread, CLEAN_REQ_QUEUE, CLEAN_RUNNER, MPMC};
+pub use self::vm_clean_thread::{
+    become_clean_thread, create_tmp_vm_clean_thread, init_vm_clean_thread, CLEAN_REQ_QUEUE,
+    CLEAN_RUNNER, MPMC,
+};
 pub use self::vm_perms::VMPerms;
 pub use self::vm_range::VMRange;
 

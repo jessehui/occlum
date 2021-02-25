@@ -20,6 +20,7 @@
 #![feature(get_mut_unchecked)]
 #![feature(drain_filter)]
 #![feature(test)]
+#![feature(box_syntax)]
 
 #[macro_use]
 extern crate async_rt;

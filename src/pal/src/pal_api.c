@@ -33,7 +33,7 @@ int occlum_pal_init(const struct occlum_pal_attr *attr) {
 
     if (attr->num_vcpus == 0) {
         // TODO: retrive the number of CPUs on the platform
-        *(int *)(&attr->num_vcpus) = 6;
+        *(int *)(&attr->num_vcpus) = 8;
     }
 
     sgx_enclave_id_t eid = pal_get_enclave_id();

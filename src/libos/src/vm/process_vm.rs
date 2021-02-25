@@ -131,7 +131,7 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
                 let desired_range = VMRange::new_with_layout(elf_layout, min_start);
                 let vm_option = VMMapOptionsBuilder::default()
                     .size(desired_range.size())
-                    .addr(VMMapAddr::Hint(desired_range.start()))
+                    // .addr(VMMapAddr::Hint(desired_range.start()))
                     .align(elf_layout.align())
                     .perms(VMPerms::ALL) // set it to read | write | exec for simplicity
                     .initializer(VMInitializer::DoNothing())
@@ -155,7 +155,7 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
         let desired_range = VMRange::new_with_layout(heap_layout, heap_min_start);
         let vm_option = VMMapOptionsBuilder::default()
             .size(desired_range.size())
-            .addr(VMMapAddr::Hint(desired_range.start()))
+            // .addr(VMMapAddr::Hint(desired_range.start()))
             .perms(VMPerms::READ | VMPerms::WRITE)
             .build()?;
         let heap_start = vm_manager.mmap(vm_option)?;
@@ -172,7 +172,7 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
         let desired_range = VMRange::new_with_layout(stack_layout, stack_min_start);
         let vm_option = VMMapOptionsBuilder::default()
             .size(desired_range.size())
-            .addr(VMMapAddr::Hint(desired_range.start()))
+            // .addr(VMMapAddr::Hint(desired_range.start()))
             .perms(VMPerms::READ | VMPerms::WRITE)
             .build()?;
         let stack_start = vm_manager.mmap(vm_option)?;
@@ -186,7 +186,7 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
         debug_assert!(vm_range.is_superset_of(&stack_range));
 
         // Set mmap prefered start address
-        vm_manager.set_mmap_prefered_start_addr(min_start);
+        // vm_manager.set_mmap_prefered_start_addr(min_start);
 
         Ok(ProcessVM {
             // process_range,
@@ -405,7 +405,8 @@ impl ProcessVM {
         };
         let initializer = {
             if flags.contains(MMapFlags::MAP_ANONYMOUS) {
-                VMInitializer::FillZeros()
+                // This should be filled with zeros before
+                VMInitializer::DoNothing()
             } else {
                 let file_ref = current!().file(fd)?;
                 VMInitializer::LoadFromFile {

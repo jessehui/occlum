@@ -7,52 +7,63 @@ use core::ptr;
 use flume::{Receiver, Sender};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-// pub static mut VM_CLEAN_THREAD_RUNNING: AtomicBool = AtomicBool::new(false);
-const MAX_QUEUED_MEMSET_REQS: usize = 1_000;
+const MAX_QUEUED_MEMSET_REQS: usize = 10_000;
 
 lazy_static! {
-// Clean all munmapped ranges before exit
-    // pub static ref VM_CLEAN_DONE: Arc<SgxMutex<bool>> = Arc::new(SgxMutex::new(false)); // safe between threads
-    pub static ref MPMC: (Sender<VMRange>, Receiver<VMRange>) = flume::bounded(MAX_QUEUED_MEMSET_REQS);
+    pub static ref MPMC: (Sender<VMRange>, Receiver<VMRange>) = flume::unbounded();
     pub static ref CLEAN_REQ_QUEUE: &'static Sender<VMRange> = &(*MPMC).0;
     pub static ref CLEAN_RUNNER: &'static Receiver<VMRange> = &(*MPMC).1;
 }
+enum LiveTime {
+    Global,
+    Temporal,
+}
 
 pub fn init_vm_clean_thread() -> Result<()> {
-    // unsafe { *VM_CLEAN_THREAD_RUNNING.get_mut() = true };
-    async_rt::task::spawn(mem_worker_thread_func());
+    async_rt::task::spawn(mem_worker_thread_func(LiveTime::Global));
+    // async_rt::task::spawn(mem_worker_thread_func(LiveTime::Global));
     Ok(())
 }
 
-async fn mem_worker_thread_func() {
-    // let (tx, rx) = flume::bounded(MAX_QUEUED_MEMSET_REQS);
-    mem_worker_thread_func_inner().await;
+pub fn create_tmp_vm_clean_thread() -> Result<()> {
+    async_rt::task::spawn(mem_worker_thread_func(LiveTime::Temporal));
+    Ok(())
 }
 
-async fn mem_worker_thread_func_inner() -> Result<()> {
+// This will exit when the channel is empty
+pub fn become_clean_thread() -> Result<()> {
+    mem_worker_thread_func_tmp();
+    Ok(())
+}
+
+async fn mem_worker_thread_func(live_time: LiveTime) {
+    match live_time {
+        LiveTime::Global => mem_worker_thread_func_global().await,
+        LiveTime::Temporal => mem_worker_thread_func_tmp(),
+    };
+}
+
+async fn mem_worker_thread_func_global() -> Result<()> {
     // let mut done = *VM_CLEAN_DONE.lock().unwrap();
+    // let runner = CLEAN_RUNNER.clone();
     while let Ok(req) = CLEAN_RUNNER.recv_async().await {
-        USER_SPACE_VM_MANAGER
-            .vm_manager()
-            .clean_dirty_range_in_bgthread(req)?;
+        USER_SPACE_VM_MANAGER.vm_manager().clean_dirty_range(req)?;
+        // println!("global cleaning thread is cleaning");
     }
     // this never reaches
     assert!(CLEAN_RUNNER.is_empty() == true);
-    // while unsafe { VM_CLEAN_THREAD_RUNNING.load(Ordering::Relaxed) } {
-    //     let all_process = get_all_processes();
-    //     for process in all_process.iter() {
-    //         if let Some(thread) = process.main_thread() {
-    //             thread
-    //                 .vm()
-    //                 .get_mmap_manager()
-    //                 .clean_dirty_range_in_bgthread()?;
-    //         }
-    //     }
-    // }
-    //let mut done = VM_CLEAN_DONE.lock().unwrap();
-    // done = true;
-    // drop(done);
     println!("vm clean thread really exit");
+    Ok(())
+}
+
+fn mem_worker_thread_func_tmp() -> Result<()> {
+    // let mut done = *VM_CLEAN_DONE.lock().unwrap();
+    let tmp_runner = CLEAN_RUNNER.clone();
+    while let Ok(req) = tmp_runner.try_recv() {
+        USER_SPACE_VM_MANAGER.vm_manager().clean_dirty_range(req)?;
+        // println!("a tmp thread is help cleaning");
+    }
+    // println!("tmp runner exit");
     Ok(())
 }
 

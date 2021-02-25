@@ -1,5 +1,18 @@
 // Implements free space management for memory.
 // Currently only use simple vector as the base structure.
+//
+// The elements in the vector are sorted from (more recently used, smaller ranges) to (least recently used, bigger ranges)
+//
+// Thus for finding free ranges, the function could return on first range with enough size.
+//
+// When returing free ranges, it can be inserted just as the first element of free range vector and would be picked first if
+// the size is enough. This should be done in the cleaning thread.
+//
+// TODO: Define strategies for allocation.
+// (1) Fast: more recently used ranges will be allocated first. Reduce the number of sorting (no sort when alloc or free), and gain more performance from cache.
+//     Only sort when there is not enough size for allocation.
+// (2) Effecient: smaller ranges will be allocated first. Sort everytime when there is alloc or free.
+// (3) Mixed: Current implementation. Only sort after allocation to put smaller ranges to the front. No sort when free.
 
 use super::vm_manager::VMMapAddr;
 use super::*;
@@ -8,8 +21,7 @@ static INITIAL_SIZE: usize = 100;
 
 #[derive(Debug, Default)]
 pub struct VMFreeSpaceManager {
-    free_manager: SgxMutex<Vec<VMRange>>,
-    mmap_prefered_start_addr: SgxMutex<usize>, // Prefer to alloc mmap range starting this address
+    free_manager: SgxMutex<Vec<VMRange>>, // sort as (previously used, small range) -> (not used, big range)
 }
 
 impl VMFreeSpaceManager {
@@ -19,7 +31,6 @@ impl VMFreeSpaceManager {
 
         VMFreeSpaceManager {
             free_manager: SgxMutex::new(free_manager),
-            mmap_prefered_start_addr: SgxMutex::new(initial_free_range.start()), // make it the start of VMManger range by default
         }
     }
 
@@ -27,22 +38,11 @@ impl VMFreeSpaceManager {
         self.free_manager.lock().unwrap()
     }
 
-    // This is used to set the mmap prefered start address for VMManager
-    // Set mmap prefered start addr only to higher value
-    pub fn set_mmap_prefered_start_addr(&self, addr: usize) {
-        let mut current = self.mmap_prefered_start_addr.lock().unwrap();
-        if addr > *current {
-            *current = addr;
-        }
-    }
-
-    // Find the free range that satisfies the constraints of size and address
-    pub fn find_free_range(&self, size: usize, addr: VMMapAddr) -> Result<VMRange> {
+    pub fn find_free_range_internal(&self, size: usize, addr: VMMapAddr) -> Result<VMRange> {
         // Record the minimal free range that satisfies the contraints
         let mut result_free_range: Option<VMRange> = None;
         let mut result_idx: Option<usize> = None;
         let mut free_list = self.free_manager.lock().unwrap();
-        let mmap_prefered_start_addr = self.mmap_prefered_start_addr.lock().unwrap();
         //println!("1. free list when finding free range: {:?}", free_list);
 
         for (idx, free_range) in free_list.iter().enumerate() {
@@ -59,48 +59,43 @@ impl VMFreeSpaceManager {
                 VMMapAddr::Any => {}
                 // Prefer to have free_range.start == addr
                 VMMapAddr::Hint(addr) => {
-                    if free_range.contains(addr) {
-                        if free_range.end() - addr >= size {
-                            free_range.start = addr;
-                            free_range.end = addr + size;
-                            Self::free_list_update_range(free_list, idx, free_range);
-                            return Ok(free_range);
-                        }
-                    }
+                    // if free_range.contains(addr) {
+                    //     if free_range.end() - addr >= size {
+                    //         free_range.start = addr;
+                    //         free_range.end = addr + size;
+                    //         Self::free_list_update_range(free_list, idx, free_range);
+                    //         return Ok(free_range);
+                    //     }
+                    // }
                 }
                 // Must have free_range.start == addr
                 VMMapAddr::Need(addr) | VMMapAddr::Force(addr) => {
-                    if free_range.start() > addr {
-                        //unsafe {self.spin_lock.0.unlock();}
-                        return_errno!(ENOMEM, "not enough memory for fixed mmap");
-                    }
-                    if !free_range.contains(addr) {
-                        continue;
-                    }
-                    if free_range.end() - addr < size {
-                        //unsafe {self.spin_lock.0.unlock();}
-                        return_errno!(ENOMEM, "not enough memory for fixed mmap");
-                    }
-                    free_range.start = addr;
-                    free_range.end = addr + size;
-                    Self::free_list_update_range(free_list, idx, free_range);
-                    return Ok(free_range);
+                    //     if free_range.start() > addr {
+                    //         //unsafe {self.spin_lock.0.unlock();}
+                    //         return_errno!(ENOMEM, "not enough memory for fixed mmap");
+                    //     }
+                    //     if !free_range.contains(addr) {
+                    //         continue;
+                    //     }
+                    //     if free_range.end() - addr < size {
+                    //         //unsafe {self.spin_lock.0.unlock();}
+                    //         return_errno!(ENOMEM, "not enough memory for fixed mmap");
+                    //     }
+                    //     free_range.start = addr;
+                    //     free_range.end = addr + size;
+                    //     Self::free_list_update_range(free_list, idx, free_range);
+                    //     return Ok(free_range);
                 }
             }
 
-            if result_free_range == None
-                || result_free_range.as_ref().unwrap().size() > free_range.size()
-                 // Preferentially alloc range above mmap_prefered_start_addr
-                 || (result_free_range.as_ref().unwrap().end() < *mmap_prefered_start_addr
-                 && *mmap_prefered_start_addr <= free_range.start())
-            {
-                result_free_range = Some(free_range);
-                result_idx = Some(idx);
-            }
+            result_free_range = Some(free_range);
+            result_idx = Some(idx);
+            break;
         }
 
+        // There is not enough free range. We just return here but caller can do a merge and
+        // sort and try finding again.
         if result_free_range.is_none() {
-            //unsafe {self.spin_lock.0.unlock();}
             return_errno!(ENOMEM, "not enough memory");
         }
 
@@ -108,6 +103,7 @@ impl VMFreeSpaceManager {
         let mut result_free_range = result_free_range.unwrap();
         result_free_range.end = result_free_range.start + size;
         Self::free_list_update_range(free_list, index, result_free_range);
+        //println!("[1] result free range = {:?}", result_free_range);
         return Ok(result_free_range);
     }
 
@@ -117,40 +113,64 @@ impl VMFreeSpaceManager {
         range: VMRange,
     ) {
         let ranges_after_subtraction = free_list[index].subtract(&range);
+        debug_assert!(ranges_after_subtraction.len() <= 2);
         if ranges_after_subtraction.len() == 0 {
             free_list.remove(index);
             return;
         }
         free_list[index] = ranges_after_subtraction[0];
-        if ranges_after_subtraction.len() > 1 {
+        if ranges_after_subtraction.len() == 2 {
             free_list.insert(index + 1, ranges_after_subtraction[1]);
         }
+        // put small ranges to front
+        free_list.sort_unstable_by(|range_a, range_b| range_a.size().cmp(&range_b.size()));
+        //println!("[1] after mmap free range = {:?}", free_list);
     }
 
     pub fn add_clean_range_back_to_free_manager(&self, clean_range: VMRange) -> Result<()> {
-        // println!("[0] clean range request done: {:?}", clean_range);
-        let mut new_free_list = Vec::with_capacity(INITIAL_SIZE);
         let mut free_list = self.free_manager.lock().unwrap();
-        //println!("1. dirty_range = {:?}", clean_range);
-        //println!("1. before update free_list = {:?}", free_list);
+        // TODO: This clean range should be inserted first to be allocated early.
+        // However, insert has a huge performance impact in the benchmark. We can reconsider this in the future.
         free_list.push(clean_range);
-        free_list.sort_unstable_by(|range_a, range_b| range_a.start().cmp(&range_b.start()));
-
-        new_free_list.push(free_list[0]);
-        for i in 1..free_list.len() {
-            let &mut top = new_free_list.as_mut_slice().last_mut().unwrap();
-
-            if top.end() < free_list[i].start() {
-                new_free_list.push(free_list[i]);
-            } else if top.end() < free_list[i].end() {
-                let mut new_top = top.clone();
-                new_top.end = free_list[i].end();
-                new_free_list.pop();
-                new_free_list.push(new_top);
-            }
-        }
-        *free_list = new_free_list;
-        // println!("1. after update free_list = {:?}", free_list);
         Ok(())
+    }
+
+    pub fn sort_when_exit(&self) {
+        let mut free_list = self.free_manager.lock().unwrap();
+        free_list.sort_unstable_by(|range_a, range_b| range_a.start().cmp(&range_b.start()));
+        //println!("free_list when exit before merge = {:?}", free_list);
+        while (free_list.len() != 1) {
+            let right_range = free_list[1].clone();
+            let mut left_range = &mut free_list[0];
+            debug_assert!(left_range.end() == right_range.start());
+            left_range.set_end(right_range.end());
+            free_list.remove(1);
+        }
+        //println!("free_list when exit after merge = {:?}", free_list);
+        debug_assert!(free_list.len() == 1);
+    }
+
+    // This can be called when there is not enough space for allocation or the thread is idle.
+    pub fn sort_and_merge(&self) {
+        let mut free_list = self.free_manager.lock().unwrap();
+        if free_list.len() == 0 {
+            return;
+        }
+        // sort 1st time to merge small ranges
+        free_list.sort_unstable_by(|range_a, range_b| range_a.start().cmp(&range_b.start()));
+        let mut idx = 0;
+        while (idx < free_list.len() - 1) {
+            let right_range = free_list[idx + 1].clone();
+            let mut left_range = &mut free_list[idx];
+            if left_range.end() == right_range.start() {
+                left_range.set_end(right_range.end());
+                free_list.remove(idx + 1);
+                continue;
+            }
+            idx += 1;
+        }
+
+        // sort 2nd time to put small ranges to front
+        free_list.sort_unstable_by(|range_a, range_b| range_a.size().cmp(&range_b.size()));
     }
 }

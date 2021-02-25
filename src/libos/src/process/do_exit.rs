@@ -114,13 +114,14 @@ fn exit_process(thread: &ThreadRef, term_status: TermStatus) {
         idle_inner.remove_zombie_child(pid);
         wake_host(&process, term_status);
         if !CLEAN_RUNNER.is_empty() {
+            let clean_runner = CLEAN_RUNNER.clone();
             while let Ok(req) = CLEAN_RUNNER.try_recv() {
-                USER_SPACE_VM_MANAGER
-                    .vm_manager()
-                    .clean_dirty_range_in_bgthread(req);
+                USER_SPACE_VM_MANAGER.vm_manager().clean_dirty_range(req);
             }
         }
         drop(&*CLEAN_REQ_QUEUE);
+        assert!(CLEAN_RUNNER.is_empty());
+        USER_SPACE_VM_MANAGER.vm_manager().sort_when_exit();
         // Sadly, this is not true
         // assert!(CLEAN_RUNNER.is_disconnected());
         println!("vm clean thread should exit");

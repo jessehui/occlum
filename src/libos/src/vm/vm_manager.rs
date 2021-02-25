@@ -1,17 +1,17 @@
 use super::*;
 
 use super::free_vm_manager::VMFreeSpaceManager;
-use super::vm_area::VMArea;
+use super::vm_area::*;
 use super::vm_perms::VMPerms;
 use crate::process::ThreadStatus;
 use crate::time::timespec_t;
 use core::ptr;
-use crossbeam_queue::ArrayQueue;
 use intrusive_collections::rbtree::{Link, RBTree};
 use intrusive_collections::Bound;
 use intrusive_collections::RBTreeLink;
 use intrusive_collections::{intrusive_adapter, KeyAdapter};
 use sgx_tstd::sync::SgxThreadSpinlock;
+use std::collections::HashSet;
 use std::thread;
 use std::time::Duration;
 use vm_clean_thread::*;
@@ -37,9 +37,9 @@ impl VMInitializer {
                 // Do nothing
             }
             VMInitializer::FillZeros() => {
-                // for b in buf {
-                //     *b = 0;
-                // }
+                for b in buf {
+                    *b = 0;
+                }
             }
             VMInitializer::CopyFrom { range } => {
                 let src_slice = unsafe { range.as_slice() };
@@ -232,33 +232,6 @@ impl VMRemapOptions {
     }
 }
 
-#[derive(Clone)]
-struct VMAObj {
-    link: Link,
-    vma: VMArea,
-}
-
-impl fmt::Debug for VMAObj {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.vma)
-    }
-}
-
-intrusive_adapter!(VMAAdapter = Box<VMAObj>: VMAObj { link : Link });
-impl<'a> KeyAdapter<'a> for VMAAdapter {
-    type Key = usize;
-    fn get_key(&self, vma_obj: &'a VMAObj) -> usize {
-        vma_obj.vma.range().start()
-    }
-}
-
-fn make_vma_obj(vma: VMArea) -> Box<VMAObj> {
-    Box::new(VMAObj {
-        link: Link::new(),
-        vma,
-    })
-}
-
 /// Memory manager.
 ///
 /// VMManager provides useful memory management APIs such as mmap, munmap, mremap, etc. It also manages the whole
@@ -299,10 +272,9 @@ fn make_vma_obj(vma: VMArea) -> Box<VMAObj> {
 #[derive(Debug, Default)]
 pub struct VMManager {
     range: VMRange,
-    vmas: SgxMutex<RBTree<VMAAdapter>>,
-    dirty: SgxMutex<VecDeque<VMRange>>,
+    vmas: SgxMutex<RBTree<VMAAdapter>>, // This almost gurantee the search/insert/delete to be O(logN)
     free: VMFreeSpaceManager,
-    cleaning_range: SgxMutex<Option<VMRange>>,
+    cleaning_ranges: SgxMutex<HashSet<VMRange>>, // we could have multiple cleaning threads (1 global cleaning thread, maybe several self cleaning when there's not enough free space)
     spin_lock: SpinLock,
 }
 
@@ -342,16 +314,14 @@ impl VMManager {
             SgxMutex::new(_vmas)
         };
 
-        let dirty = SgxMutex::new(VecDeque::with_capacity(100));
         let spin_lock = SpinLock::default();
         let free = VMFreeSpaceManager::new(range.clone());
-        let cleaning_range = SgxMutex::new(None);
+        let cleaning_ranges = SgxMutex::new(HashSet::with_capacity(3));
         Ok(VMManager {
             range,
             vmas,
-            dirty,
             free,
-            cleaning_range,
+            cleaning_ranges,
             spin_lock,
         })
     }
@@ -364,10 +334,8 @@ impl VMManager {
         &self.vmas
     }
 
-    // This is used to set the mmap prefered start address for VMManager
-    // Set mmap prefered start addr only to higher value
-    pub fn set_mmap_prefered_start_addr(&self, addr: usize) {
-        self.free.set_mmap_prefered_start_addr(addr)
+    pub fn free(&self) -> &VMFreeSpaceManager {
+        &self.free
     }
 
     // Munmap a range when this range is already munmap by user but not cleaned yet.
@@ -437,21 +405,21 @@ impl VMManager {
             Ok(())
         }
     */
-    fn the_range_is_cleaning(&self, range: &VMRange) -> bool {
-        let _range = self.cleaning_range.lock().unwrap();
-        match *_range {
-            None => {
-                return false;
-            }
-            Some(cleaning_range) => {
-                if cleaning_range.intersect(range).is_some() {
-                    return true;
-                } else {
-                    return false;
-                }
-            }
-        }
-    }
+    // fn the_range_is_cleaning(&self, range: &VMRange) -> bool {
+    //     let _range = self.cleaning_range.lock().unwrap();
+    //     match *_range {
+    //         None => {
+    //             return false;
+    //         }
+    //         Some(cleaning_range) => {
+    //             if cleaning_range.intersect(range).is_some() {
+    //                 return true;
+    //             } else {
+    //                 return false;
+    //             }
+    //         }
+    //     }
+    // }
 
     pub fn mmap(&self, mut options: VMMapOptions) -> Result<usize> {
         // TODO: respect options.align when mmap
@@ -522,7 +490,7 @@ impl VMManager {
             self.spin_lock.0.lock();
         }
         // Allocate a new range for this mmap request
-        let free_range = self.free.find_free_range(size, addr);
+        let free_range = self.find_free_range(size, addr);
         if let Err(e) = free_range {
             // must unlock before return
             unsafe {
@@ -551,8 +519,8 @@ impl VMManager {
             Self::apply_perms(&new_vma.vma, new_vma.vma.perms());
         }
 
-        trace!("mmap range: {:?}", new_free_range);
-        trace!("free list range: {:?}", self.free);
+        // println!("mmap range: {:?}", new_free_range);
+        // println!("free list range: {:?}", self.free);
         // After initializing, we can safely insert the new VMA
         //let mut insert_idx: usize = 0;
         //let vmas = self.vmas.lock().unwrap();
@@ -588,18 +556,13 @@ impl VMManager {
 
         trace!("munmap range: {:?}", munmap_range);
         let bound = munmap_range.start();
-        // unsafe {
-        //     self.spin_lock.0.lock();
-        // }
+        unsafe {
+            self.spin_lock.0.lock();
+        }
         let mut vmas = self.vmas.lock().unwrap();
-        //_println!("vmas before munmap = {:?}", vmas);
-        //let upper_bound = Bound::Included(&munmap_range.start());
+        // the cursor to iterate vmas that might intersect with munmap_range
         let mut containing_vma = vmas.upper_bound_mut(Bound::Included(&bound));
-        assert!(containing_vma.get().unwrap().vma.start() <= bound);
-        // let intersection_vma = match vma.intersect(&munmap_range) {
-        //                 None => return vec![vma],
-        //                 Some(intersection_vma) => intersection_vma,
-        //             };
+        debug_assert!(containing_vma.get().unwrap().vma.start() <= bound);
         while !containing_vma.is_null()
             && containing_vma.get().unwrap().vma.start() <= munmap_range.end()
         {
@@ -637,8 +600,8 @@ impl VMManager {
                 containing_vma.move_next();
                 continue;
             } else {
-                // the intersection_vma is a superset of current vma
-                assert!(intersection_vma.is_superset_of(vma));
+                // the intersection_vma is a subset of current vma
+                debug_assert!(intersection_vma.is_subset_of(vma));
                 let vma_left_part = make_vma_obj(new_vmas.swap_remove(0));
                 containing_vma.replace_with(vma_left_part);
                 let vma_right_part = make_vma_obj(new_vmas.pop().unwrap());
@@ -647,34 +610,78 @@ impl VMManager {
             }
         }
 
-        //_println!("clean munmap range request: {:?}", munmap_range);
-        // unsafe {
-        //     self.spin_lock.0.unlock();
-        // }
         drop(vmas);
-        //_println!("vmas after munmap: {:?}", self.vmas.lock().unwrap());
-        CLEAN_REQ_QUEUE.send_async(munmap_range);
+        unsafe {
+            self.spin_lock.0.unlock();
+        }
+        CLEAN_REQ_QUEUE.send(munmap_range);
 
         Ok(())
     }
 
-    pub fn clean_dirty_range_in_bgthread(&self, dirty_range: VMRange) -> Result<()> {
+    pub fn clean_dirty_range(&self, dirty_range: VMRange) -> Result<()> {
         // FIXME: Check if there is intersect part that is in vmas (using)
         // let vmas = self.vmas.lock().unwrap();
         // let bound = dirty_range.start();
         // let containing_vma = vmas.upper_bound(Bound::Included(&bound))
-        *self.cleaning_range.lock().unwrap() = Some(dirty_range);
-        // dirty_range.clean();
+        //println!("bgthread cleaning range: {:?}", dirty_range);
+        self.cleaning_ranges.lock().unwrap().insert(dirty_range);
+        dirty_range.clean();
         unsafe {
             self.spin_lock.0.lock();
         }
         self.free.add_clean_range_back_to_free_manager(dirty_range);
-        ////_println!("[_bgthread_] after clean free list: {:?}", self.free);
-        *self.cleaning_range.lock().unwrap() = None;
+        // println!("[_bgthread_] after clean free list: {:?}", self.free);
+        self.cleaning_ranges.lock().unwrap().remove(&dirty_range);
         unsafe {
             self.spin_lock.0.unlock();
         }
         Ok(())
+    }
+
+    pub async fn sort_when_exit(&self) -> Result<()> {
+        // This shouldn't take long. As there could only be one last cleaning range.
+        loop {
+            let cleaning_ranges = self.cleaning_ranges.lock().unwrap();
+            if cleaning_ranges.len() == 0 {
+                self.free.sort_when_exit();
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn find_free_range(&self, size: usize, addr: VMMapAddr) -> Result<VMRange> {
+        let ret = self.free.find_free_range_internal(size, addr);
+        if ret.is_ok() {
+            return ret;
+        }
+
+        // Sadly, we can't find free range easily
+        // First, let's try to merge the free range to bigger range
+        self.free.sort_and_merge();
+        let ret = self.free.find_free_range_internal(size, addr);
+        if ret.is_ok() {
+            return ret;
+        }
+
+        // Second, become clean thread to clean munmap range
+        // This will return when no more pending dirty ranges in the channel
+        unsafe {
+            self.spin_lock.0.unlock();
+        }
+        become_clean_thread();
+        unsafe {
+            self.spin_lock.0.lock();
+        }
+        let ret = self.free.find_free_range_internal(size, addr);
+        if ret.is_ok() {
+            return ret;
+        }
+
+        // For the last time, do sort and merge again
+        self.free.sort_and_merge();
+        self.free.find_free_range_internal(size, addr)
     }
 
     // fn get_free_from_vmas(&self, mut free_list: Vec<VMRange>) -> Vec<VMRange> {
