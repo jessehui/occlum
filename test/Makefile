@@ -73,8 +73,8 @@ test: build pretest $(TEST_TARGETS) posttest
 
 pretest:
 	@$(RM) $(PASS_LOG) $(FAIL_LOG)
-	@cd $(BUILD_DIR)/test && \
-		$(BUILD_DIR)/bin/occlum start
+	# @cd $(BUILD_DIR)/test && \
+	# 	$(BUILD_DIR)/bin/occlum start
 
 $(TEST_TARGETS): test-%: %
 	@touch $(PASS_LOG) $(FAIL_LOG)

@@ -18,7 +18,7 @@ pub enum VMInitializer {
     CopyOldAndReadNew {
         old_range: VMRange,
         file: FileRef,
-        offset: usize,
+        offset: usize, // read file from this offset
     },
 }
 
@@ -61,6 +61,8 @@ impl VMInitializer {
                 file,
                 offset,
             } => {
+                // TODO: Handle old_range with non-readable subrange
+                println!("offset in VMInitializer::CopyOldAndReadNew = {:?}", offset);
                 let src_slice = unsafe { old_range.as_slice() };
                 let copy_len = src_slice.len();
                 debug_assert!(copy_len <= buf.len());
@@ -69,6 +71,7 @@ impl VMInitializer {
                 let len = file
                     .read_at(*offset, &mut buf[copy_len..])
                     .cause_err(|_| errno!(EIO, "failed to init memory from file"))?;
+                println!("read len in VMInitializer::CopyOldAndReadNew = {:?}", len);
                 for b in &mut buf[(copy_len + len)..] {
                     *b = 0;
                 }
@@ -353,7 +356,7 @@ impl VMManager {
 
         // After initializing, we can safely insert the new VMA
         self.insert_new_vma(insert_idx, new_vma);
-
+        println!("vmas after mmap: {:?}", self.vmas);
         Ok(new_addr)
     }
 
@@ -432,7 +435,8 @@ impl VMManager {
         } else {
             SizeType::Growing
         };
-
+        println!("old_range = {:?}", old_range);
+        println!("mremap vmas = {:?}", self.vmas);
         // The old range must be contained in one VMA
         let idx = self
             .find_containing_vma_idx(&old_range)
@@ -441,107 +445,175 @@ impl VMManager {
         // Get the memory permissions of the old range
         let perms = containing_vma.perms();
         // Get the write back file of the old range if there is one.
-        let mut writeback_file = containing_vma.writeback_file().clone();
+        let writeback_file = containing_vma.writeback_file();
 
         // Implement mremap as one optional mmap followed by one optional munmap.
         //
-        // The exact arguments for the mmap and munmap are determined by the values of MRemapFlags
-        // and SizeType. There is a total of 9 combinations between MRemapFlags and SizeType.
-        // As some combinations result in the same mmap and munmap operations, the following code
-        // only needs to match four patterns of (MRemapFlags, SizeType) and treat each case
-        // accordingly.
+        // The exact arguments for the mmap and munmap are determined by the values of MRemapFlags,
+        // SizeType and writeback_file. There is a total of 18 combinations among MRemapFlags and
+        // SizeType and writeback_file. As some combinations result in the same mmap and munmap operations,
+        // the following code only needs to match four patterns of (MRemapFlags, SizeType, writeback_file)
+        // and treat each case accordingly.
+        //
+        // FIXME: Current implementation for file-backed memory mremap has limitation that if a SUBRANGE of the previous
+        // file-backed mmap with MAP_SHARED is then mremap-ed with MREMAP_MAYMOVE, there will be two vmas that have the same backed file.
+        // On Linux, writing to either memory vma or the file will update the other two equally. But we won't be able to support this before
+        // we really have paging.
 
         // Determine whether need to do mmap. And when possible, determine the returned address
-        let (need_mmap, mut ret_addr) = match (flags, size_type) {
-            (MRemapFlags::None, SizeType::Growing) => {
-                let vm_initializer_for_new_range = if let Some((backed_file, offset)) =
-                    writeback_file
-                {
-                    // Update writeback file offset
-                    writeback_file = Some((backed_file.clone(), offset + containing_vma.size()));
-                    VMInitializer::LoadFromFile {
-                        file: backed_file,
-                        offset: offset + containing_vma.size(), // file-backed mremap should start from the end of previous mmap/mremap file
-                    }
-                } else {
-                    VMInitializer::FillZeros()
+        let (need_mmap, mut ret_addr) = match (flags, size_type, writeback_file) {
+            (MRemapFlags::None, SizeType::Growing, None) => {
+                println!("case 1");
+                let vm_initializer_for_new_range = VMInitializer::FillZeros();
+                let mmap_opts = VMMapOptionsBuilder::default()
+                    .size(new_size - old_size)
+                    .addr(VMMapAddr::Need(old_range.end()))
+                    .perms(perms)
+                    .initializer(vm_initializer_for_new_range)
+                    .build()?;
+                let ret_addr = Some(old_addr);
+                (Some(mmap_opts), ret_addr)
+            }
+            (MRemapFlags::None, SizeType::Growing, Some((backed_file, offset))) => {
+                // Update writeback file offset
+                println!("case 2");
+                //debug_assert!(old_range == containing_vma.range());
+                let new_writeback_file =
+                    Some((backed_file.clone(), offset + containing_vma.size()));
+                let vm_initializer_for_new_range = VMInitializer::LoadFromFile {
+                    file: backed_file.clone(),
+                    offset: offset + containing_vma.size(), // file-backed mremap should start from the end of previous mmap/mremap file
                 };
                 let mmap_opts = VMMapOptionsBuilder::default()
                     .size(new_size - old_size)
                     .addr(VMMapAddr::Need(old_range.end()))
                     .perms(perms)
                     .initializer(vm_initializer_for_new_range)
-                    .writeback_file(writeback_file)
+                    .writeback_file(new_writeback_file)
                     .build()?;
                 let ret_addr = Some(old_addr);
                 (Some(mmap_opts), ret_addr)
             }
-            (MRemapFlags::MayMove, SizeType::Growing) => {
+            (MRemapFlags::MayMove, SizeType::Growing, None) => {
                 let prefered_new_range =
                     VMRange::new_with_size(old_addr + old_size, new_size - old_size)?;
                 if self.is_free_range(&prefered_new_range) {
+                    println!("case 3");
                     // Don't need to move the old range
-                    let vm_initializer_for_new_range =
-                        if let Some((backed_file, offset)) = writeback_file {
-                            // Write back file should start from new offset
-                            writeback_file =
-                                Some((backed_file.clone(), offset + containing_vma.size()));
-                            VMInitializer::LoadFromFile {
-                                file: backed_file,
-                                offset: offset + containing_vma.size(), // file-backed mremap should start from the end of previous mmap/mremap file
-                            }
-                        } else {
-                            VMInitializer::FillZeros()
-                        };
+                    let vm_initializer_for_new_range = VMInitializer::FillZeros();
                     let mmap_ops = VMMapOptionsBuilder::default()
                         .size(prefered_new_range.size())
                         .addr(VMMapAddr::Need(prefered_new_range.start()))
                         .perms(perms)
                         .initializer(vm_initializer_for_new_range)
-                        .writeback_file(writeback_file)
+                        // .writeback_file(writeback_file)
                         .build()?;
                     (Some(mmap_ops), Some(old_addr))
                 } else {
+                    println!("case 4");
                     // Need to move old range to a new range and init the new range
-                    let vm_initializer_for_new_range =
-                        if let Some((backed_file, offset)) = &writeback_file {
-                            VMInitializer::CopyOldAndReadNew {
-                                old_range: old_range,
-                                file: backed_file.clone(),
-                                offset: offset + containing_vma.size(),
-                            }
-                        } else {
-                            VMInitializer::CopyFrom { range: old_range }
-                        };
+                    let vm_initializer_for_new_range = VMInitializer::CopyFrom { range: old_range };
                     let mmap_ops = VMMapOptionsBuilder::default()
                         .size(new_size)
                         .addr(VMMapAddr::Any)
                         .perms(perms)
                         .initializer(vm_initializer_for_new_range)
-                        .writeback_file(writeback_file)
+                        // .writeback_file(writeback_file)
                         .build()?;
                     // Cannot determine the returned address for now, which can only be obtained after calling mmap
                     let ret_addr = None;
                     (Some(mmap_ops), ret_addr)
                 }
             }
-            (MRemapFlags::FixedAddr(new_addr), _) => {
-                let vm_initializer_for_new_range =
-                    if let Some((backed_file, offset)) = &writeback_file {
-                        VMInitializer::CopyOldAndReadNew {
-                            old_range: old_range,
-                            file: backed_file.clone(),
-                            offset: offset + containing_vma.size(),
-                        }
-                    } else {
-                        VMInitializer::CopyFrom { range: old_range }
+            (MRemapFlags::MayMove, SizeType::Growing, Some((backed_file, offset))) => {
+                let prefered_new_range =
+                    VMRange::new_with_size(old_addr + old_size, new_size - old_size)?;
+                if self.is_free_range(&prefered_new_range) {
+                    println!("case 5");
+                    // Don't need to move the old range
+                    let vm_initializer_for_new_range = VMInitializer::LoadFromFile {
+                        file: backed_file.clone(),
+                        offset: offset + containing_vma.size(), // file-backed mremap should start from the end of previous mmap/mremap file
                     };
+                    // Write back file should start from new offset
+                    let new_writeback_file =
+                        Some((backed_file.clone(), offset + containing_vma.size()));
+                    let mmap_ops = VMMapOptionsBuilder::default()
+                        .size(prefered_new_range.size())
+                        .addr(VMMapAddr::Need(prefered_new_range.start()))
+                        .perms(perms)
+                        .initializer(vm_initializer_for_new_range)
+                        .writeback_file(new_writeback_file)
+                        .build()?;
+                    (Some(mmap_ops), Some(old_addr))
+                } else {
+                    println!("case 6");
+                    // Need to move old range to a new range and init the new range
+                    let vm_initializer_for_new_range = {
+                        let copy_end = containing_vma.end().min(old_range.start() + new_size);
+                        let copy_range = VMRange::new(old_range.start(), copy_end)?;
+                        let reread_file_start_offset = copy_end - containing_vma.start();
+                        VMInitializer::CopyOldAndReadNew {
+                            old_range: copy_range,
+                            file: backed_file.clone(),
+                            offset: reread_file_start_offset,
+                        }
+                    };
+                    // update new vma file start offset
+                    let new_writeback_file = Some((
+                        backed_file.clone(),
+                        old_range.start() - containing_vma.start(),
+                    ));
+                    let mmap_ops = VMMapOptionsBuilder::default()
+                        .size(new_size)
+                        .addr(VMMapAddr::Any)
+                        .perms(perms)
+                        .initializer(vm_initializer_for_new_range)
+                        .writeback_file(new_writeback_file)
+                        .build()?;
+                    // Cannot determine the returned address for now, which can only be obtained after calling mmap
+                    let ret_addr = None;
+                    (Some(mmap_ops), ret_addr)
+                }
+            }
+            // TODO: With MREMAP_FIXED, there will a new argument "new_address". Return EINVAL when the new
+            // address range specified by new_address and new_size overlapped the old address range specified
+            // by old_address and old_size.
+            (MRemapFlags::FixedAddr(new_addr), _, None) => {
+                println!("case 7");
+                let vm_initializer_for_new_range = { VMInitializer::CopyFrom { range: old_range } };
                 let mmap_opts = VMMapOptionsBuilder::default()
                     .size(new_size)
                     .addr(VMMapAddr::Force(new_addr))
                     .perms(perms)
                     .initializer(vm_initializer_for_new_range)
-                    .writeback_file(writeback_file)
+                    // .writeback_file(writeback_file)
+                    .build()?;
+                let ret_addr = Some(new_addr);
+                (Some(mmap_opts), ret_addr)
+            }
+            (MRemapFlags::FixedAddr(new_addr), _, Some((backed_file, offset))) => {
+                println!("case 7");
+                let vm_initializer_for_new_range = {
+                    let copy_end = containing_vma.end().min(old_range.start() + new_size);
+                    let copy_range = VMRange::new(old_range.start(), copy_end)?;
+                    let reread_file_start_offset = offset + copy_range.size();
+                    VMInitializer::CopyOldAndReadNew {
+                        old_range: copy_range,
+                        file: backed_file.clone(),
+                        offset: reread_file_start_offset,
+                    }
+                };
+                let new_writeback_file = Some((
+                    backed_file.clone(),
+                    old_range.start() - containing_vma.start(),
+                ));
+                let mmap_opts = VMMapOptionsBuilder::default()
+                    .size(new_size)
+                    .addr(VMMapAddr::Force(new_addr))
+                    .perms(perms)
+                    .initializer(vm_initializer_for_new_range)
+                    .writeback_file(new_writeback_file)
                     .build()?;
                 let ret_addr = Some(new_addr);
                 (Some(mmap_opts), ret_addr)
@@ -588,6 +660,7 @@ impl VMManager {
         }
 
         debug_assert!(ret_addr.is_some());
+        println!("vmas after mremap: {:?}", self.vmas);
         Ok(ret_addr.unwrap())
     }
 
