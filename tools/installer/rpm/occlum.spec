@@ -1,5 +1,5 @@
 %define centos_base_release 1
-
+%global _missing_build_ids_terminate_build 0
 %define _unpackaged_files_terminate_build 0
 %define sgxsdk_install_dir /opt/intel
 
