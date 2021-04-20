@@ -8,6 +8,16 @@ pub fn do_dup(old_fd: FileDesc) -> Result<FileDesc> {
 }
 
 pub fn do_dup2(old_fd: FileDesc, new_fd: FileDesc) -> Result<FileDesc> {
+    let path = get_abs_path_by_fd(old_fd);
+    if path.is_ok() {
+        warn!("dup2: old fd: {}, path = {:?}", old_fd, path);
+    } else {
+        warn!(
+            "dup2: old fd: {} (channel: {})",
+            old_fd,
+            get_channel_id_from_fd(old_fd).0
+        );
+    }
     let current = current!();
     let mut files = current.files().lock().unwrap();
     let file = files.get(old_fd)?;

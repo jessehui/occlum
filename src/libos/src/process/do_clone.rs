@@ -51,6 +51,7 @@ pub fn do_clone(
         let rlimits = current.rlimits().clone();
         let fs = current.fs().clone();
         let name = current.name().clone();
+        let sig_mask = current.sig_mask().read().unwrap().clone();
 
         let mut builder = ThreadBuilder::new()
             .process(current.process().clone())
@@ -59,6 +60,7 @@ pub fn do_clone(
             .fs(fs)
             .files(files)
             .name(name)
+            .sig_mask(sig_mask)
             .rlimits(rlimits);
         if let Some(ctid) = ctid {
             builder = builder.clear_ctid(ctid);

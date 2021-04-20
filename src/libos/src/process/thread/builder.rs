@@ -4,9 +4,9 @@ use super::{
     FileTableRef, FsViewRef, ProcessRef, ProcessVM, ProcessVMRef, ResourceLimitsRef, SchedAgentRef,
     SigQueues, SigSet, Task, Thread, ThreadId, ThreadInner, ThreadName, ThreadRef,
 };
-use crate::events::HostEventFd;
 use crate::prelude::*;
 use crate::time::ThreadProfiler;
+use crate::{events::HostEventFd, signal::SigDispositions};
 
 #[derive(Debug)]
 pub struct ThreadBuilder {
@@ -20,6 +20,8 @@ pub struct ThreadBuilder {
     files: Option<FileTableRef>,
     sched: Option<SchedAgentRef>,
     rlimits: Option<ResourceLimitsRef>,
+    sig_mask: Option<SigSet>,
+    sig_dispositions: Option<SigDispositions>,
     clear_ctid: Option<NonNull<pid_t>>,
     name: Option<ThreadName>,
 }
@@ -35,6 +37,8 @@ impl ThreadBuilder {
             files: None,
             sched: None,
             rlimits: None,
+            sig_mask: None,
+            sig_dispositions: None,
             clear_ctid: None,
             name: None,
         }
@@ -80,6 +84,16 @@ impl ThreadBuilder {
         self
     }
 
+    pub fn sig_mask(mut self, sig_mask: SigSet) -> Self {
+        self.sig_mask = Some(sig_mask);
+        self
+    }
+
+    // pub fn sig_dispositions(mut self, sig_dispositions: SigDispositions) -> Self {
+    //     self.sig_dispositions = Some(sig_dispositions);
+    //     self
+    // }
+
     pub fn clear_ctid(mut self, clear_tid_addr: NonNull<pid_t>) -> Self {
         self.clear_ctid = Some(clear_tid_addr);
         self
@@ -107,9 +121,10 @@ impl ThreadBuilder {
         let files = self.files.unwrap_or_default();
         let sched = self.sched.unwrap_or_default();
         let rlimits = self.rlimits.unwrap_or_default();
+        let sig_mask = RwLock::new(self.sig_mask.unwrap_or_default());
+        // let sig_mask = RwLock::new(SigSet::new_empty());
         let name = RwLock::new(self.name.unwrap_or_default());
         let sig_queues = RwLock::new(SigQueues::new());
-        let sig_mask = RwLock::new(SigSet::new_empty());
         let sig_tmp_mask = RwLock::new(SigSet::new_empty());
         let sig_stack = SgxMutex::new(None);
         let profiler = if cfg!(feature = "syscall_timing") {

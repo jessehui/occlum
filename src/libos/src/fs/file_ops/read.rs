@@ -1,9 +1,23 @@
 use super::*;
 
 pub fn do_read(fd: FileDesc, buf: &mut [u8]) -> Result<usize> {
-    debug!("read: fd: {}", fd);
+    let path = get_abs_path_by_fd(fd);
+    if path.is_ok() {
+        warn!("read: fd: {}, path = {:?}", fd, path);
+    } else {
+        warn!(
+            "read: fd: {} (channel: {})",
+            fd,
+            get_channel_id_from_fd(fd).0
+        );
+    }
     let file_ref = current!().file(fd)?;
-    file_ref.read(buf)
+    let ret = file_ref.read(buf);
+    let string = std::str::from_utf8(&buf);
+    if string.is_ok() {
+        warn!("read buf: {:?}", string.unwrap());
+    }
+    return ret;
 }
 
 pub fn do_readv(fd: FileDesc, bufs: &mut [&mut [u8]]) -> Result<usize> {

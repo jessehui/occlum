@@ -205,6 +205,10 @@ impl File for INodeFile {
     fn ioctl(&self, cmd: &mut IoctlCmd) -> Result<i32> {
         let cmd_num = cmd.cmd_num();
         let cmd_argp = cmd.arg_ptr() as usize;
+        match cmd {
+            IoctlCmd::TCGETS(_) => return_errno!(ENOTTY, "this is wrong"),
+            _ => {}
+        };
         self.inode.io_control(cmd_num, cmd_argp)?;
         Ok(0)
     }

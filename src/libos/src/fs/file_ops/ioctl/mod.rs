@@ -26,6 +26,8 @@ impl_ioctl_nums_and_cmds! {
     // Format:
     // ioctl_name => (ioctl_num, ioctl_type_arg)
 
+    // Get terminal attributes
+    TCGETS => (0x5401, mut termios), // ignore
     // Get window size
     TIOCGWINSZ => (0x5413, mut WinSize),
     // Set window size

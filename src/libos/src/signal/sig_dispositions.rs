@@ -4,7 +4,7 @@ use super::constants::*;
 use super::{SigAction, SigNum};
 use crate::prelude::*;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct SigDispositions {
     // SigNum -> SigAction
     map: [SigAction; COUNT_ALL_SIGS],
@@ -29,6 +29,23 @@ impl SigDispositions {
 
     pub fn iter<'a>(&'a self) -> SigDispositionsIter<'a> {
         SigDispositionsIter::new(self)
+    }
+
+    // inherit sigdispositions for child process, user defined sigaction should be set to default
+    pub fn inherit(&mut self) {
+        for mut sigaction in &mut self.map {
+            match sigaction {
+                SigAction::User {
+                    handler_addr,
+                    flags,
+                    restorer_addr,
+                    mask,
+                } => {
+                    *sigaction = SigAction::Dfl;
+                }
+                _ => {}
+            }
+        }
     }
 
     fn num_to_idx(num: SigNum) -> usize {
@@ -79,10 +96,10 @@ impl Default for SigDispositions {
     }
 }
 
-impl fmt::Debug for SigDispositions {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "SigDispositions ");
-        let non_default_dispositions = self.iter().filter(|(_, action)| **action != SigAction::Dfl);
-        f.debug_map().entries(non_default_dispositions).finish()
-    }
-}
+// impl fmt::Debug for SigDispositions {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         write!(f, "SigDispositions ");
+//         let non_default_dispositions = self.iter().filter(|(_, action)| **action != SigAction::Dfl);
+//         f.debug_map().entries(non_default_dispositions).finish()
+//     }
+// }

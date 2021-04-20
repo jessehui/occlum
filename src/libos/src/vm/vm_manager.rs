@@ -24,9 +24,9 @@ impl VMInitializer {
                 // Do nothing
             }
             VMInitializer::FillZeros() => {
-                for b in buf {
-                    *b = 0;
-                }
+                // for b in buf {
+                //     *b = 0;
+                // }
             }
             VMInitializer::CopyFrom { range } => {
                 let src_slice = unsafe { range.as_slice() };
@@ -376,6 +376,13 @@ impl VMManager {
                 if !&intersection_vma.perms().is_default() {
                     Self::apply_perms(&intersection_vma, VMPerms::default());
                 }
+                // if intersection_vma.size() <= 67108864 {
+                unsafe {
+                    for b in intersection_vma.as_slice_mut() {
+                        *b = 0;
+                    }
+                }
+                // }
 
                 vma.subtract(&intersection_vma)
             })

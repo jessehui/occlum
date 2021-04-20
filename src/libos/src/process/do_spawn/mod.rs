@@ -9,9 +9,11 @@ use super::task::Task;
 use super::thread::ThreadName;
 use super::{table, task, ProcessRef, ThreadRef};
 use crate::fs::{
-    CreationFlags, File, FileDesc, FileTable, FsView, HostStdioFds, StdinFile, StdoutFile,
+    get_abs_path_by_fd, get_channel_id_from_fd, AsINodeFile, CreationFlags, File, FileDesc,
+    FileTable, FsView, HostStdioFds, StdinFile, StdoutFile,
 };
 use crate::prelude::*;
+use crate::signal::{SigAction, SigDispositions, SigSet};
 use crate::vm::ProcessVM;
 
 mod aux_vec;
@@ -25,6 +27,7 @@ pub fn do_spawn(
     argv: &[CString],
     envp: &[CString],
     file_actions: &[FileAction],
+    spawn_attribute: Option<SpawnAttr>,
     current_ref: &ThreadRef,
 ) -> Result<pid_t> {
     let exec_now = true;
@@ -34,6 +37,7 @@ pub fn do_spawn(
         envp,
         file_actions,
         None,
+        spawn_attribute,
         current_ref,
         exec_now,
     )
@@ -55,6 +59,7 @@ pub fn do_spawn_without_exec(
         envp,
         file_actions,
         Some(host_stdio_fds),
+        None,
         current_ref,
         exec_now,
     )
@@ -66,6 +71,7 @@ fn do_spawn_common(
     envp: &[CString],
     file_actions: &[FileAction],
     host_stdio_fds: Option<&HostStdioFds>,
+    spawn_attribute: Option<SpawnAttr>,
     current_ref: &ThreadRef,
     exec_now: bool,
 ) -> Result<pid_t> {
@@ -75,6 +81,7 @@ fn do_spawn_common(
         envp,
         file_actions,
         host_stdio_fds,
+        spawn_attribute,
         current_ref,
     )?;
 
@@ -98,6 +105,7 @@ fn new_process(
     envp: &[CString],
     file_actions: &[FileAction],
     host_stdio_fds: Option<&HostStdioFds>,
+    spawn_attribute: Option<SpawnAttr>,
     current_ref: &ThreadRef,
 ) -> Result<ProcessRef> {
     let mut argv = argv.clone().to_vec();
@@ -188,6 +196,28 @@ fn new_process(
         let fs_ref = Arc::new(SgxMutex::new(current_ref.fs().lock().unwrap().clone()));
         let sched_ref = Arc::new(SgxMutex::new(current_ref.sched().lock().unwrap().clone()));
         let rlimit_ref = Arc::new(SgxMutex::new(current_ref.rlimits().lock().unwrap().clone()));
+        let sig_mask = if spawn_attribute.is_some() && spawn_attribute.unwrap().sig_mask.is_some() {
+            spawn_attribute.unwrap().sig_mask.unwrap()
+        } else {
+            current_ref.sig_mask().read().unwrap().clone()
+        };
+
+        let mut sig_dispositions = current_ref
+            .process()
+            .sig_dispositions()
+            .read()
+            .unwrap()
+            .clone();
+        warn!("1. sig dispositions = {:?}", sig_dispositions);
+        sig_dispositions.inherit();
+        warn!("2. sig dispositions = {:?}", sig_dispositions);
+        if spawn_attribute.is_some() && spawn_attribute.unwrap().sig_default.is_some() {
+            let sig_default_set = spawn_attribute.unwrap().sig_default.unwrap();
+            sig_default_set.iter().for_each(|b| {
+                sig_dispositions.set(b, SigAction::Dfl);
+            })
+        }
+        warn!("3. sig dispositions = {:?}", sig_dispositions);
 
         // Make the default thread name to be the process's corresponding elf file name
         let elf_name = elf_path.rsplit('/').collect::<Vec<&str>>()[0];
@@ -202,9 +232,25 @@ fn new_process(
             .rlimits(rlimit_ref)
             .fs(fs_ref)
             .files(files_ref)
+            .sig_mask(sig_mask)
+            .sig_dispositions(sig_dispositions)
             .name(thread_name)
             .build()?
     };
+
+    let old_sigmask = current_ref.sig_mask().read().unwrap().clone();
+    let new_thread_sigmask = new_process_ref
+        .main_thread()
+        .unwrap()
+        .sig_mask()
+        .read()
+        .unwrap()
+        .clone();
+    warn!(
+        "old sigmask = {:?}, new sigmask = {:?}",
+        old_sigmask, new_thread_sigmask
+    );
+    // assert!(old_sigmask == new_thread_sigmask);
 
     table::add_process(new_process_ref.clone());
     table::add_thread(new_process_ref.main_thread().unwrap());
@@ -243,7 +289,9 @@ fn init_files(
         // Fork: clone file table
         let mut cloned_file_table = current_ref.files().lock().unwrap().clone();
         // Perform file actions to modify the cloned file table
+        debug!("file action when spawn:");
         for file_action in file_actions {
+            debug!("{:?}", file_action);
             match file_action {
                 &FileAction::Open {
                     ref path,
@@ -262,12 +310,35 @@ fn init_files(
                 }
                 &FileAction::Dup2(old_fd, new_fd) => {
                     let file = cloned_file_table.get(old_fd)?;
+                    let path = if let Ok(inode_file) = file.as_inode_file() {
+                        Some(inode_file.abs_path().to_owned())
+                    } else {
+                        None
+                    };
+                    if path.is_some() {
+                        warn!("dup2: old fd: {}, path = {:?}", old_fd, path);
+                    } else {
+                        let channel_id = file.get_channel_id();
+                        warn!("dup2: old fd: {} (channel: {})", old_fd, channel_id);
+                    }
                     if old_fd != new_fd {
                         cloned_file_table.put_at(new_fd, file, false);
                     }
                 }
                 &FileAction::Close(fd) => {
                     // ignore error
+                    let file = cloned_file_table.get(fd)?;
+                    let path = if let Ok(inode_file) = file.as_inode_file() {
+                        Some(inode_file.abs_path().to_owned())
+                    } else {
+                        None
+                    };
+                    if path.is_some() {
+                        warn!("close: fd: {}, path = {:?}", fd, path);
+                    } else {
+                        let channel_id = file.get_channel_id();
+                        warn!("close: fd: {} (channel: {})", fd, channel_id);
+                    }
                     cloned_file_table.del(fd);
                 }
             }
@@ -292,6 +363,12 @@ fn init_files(
     file_table.put(stdout, false);
     file_table.put(stderr, false);
     Ok(file_table)
+}
+
+#[derive(Default, Debug, Copy, Clone)]
+pub struct SpawnAttr {
+    pub sig_mask: Option<SigSet>,
+    pub sig_default: Option<SigSet>,
 }
 
 fn init_auxvec(process_vm: &ProcessVM, exec_elf_file: &ElfFile) -> Result<AuxVec> {

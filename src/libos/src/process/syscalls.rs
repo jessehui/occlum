@@ -1,10 +1,11 @@
 use super::do_arch_prctl::ArchPrctlCode;
 use super::do_clone::CloneFlags;
 use super::do_futex::{FutexFlags, FutexOp, FutexTimeout};
-use super::do_spawn::FileAction;
+use super::do_spawn::{FileAction, SpawnAttr};
 use super::prctl::PrctlCmd;
 use super::process::ProcessFilter;
 use crate::prelude::*;
+use crate::signal::{sigset_t, SigSet};
 use crate::time::{timespec_t, ClockID};
 use crate::util::mem_util::from_user::*;
 use std::ptr::NonNull;
@@ -15,19 +16,28 @@ pub fn do_spawn_for_musl(
     argv: *const *const i8,
     envp: *const *const i8,
     fdop_list: *const FdOp,
+    attribute_list: *const SpawnAttribute,
 ) -> Result<isize> {
     check_mut_ptr(child_pid_ptr)?;
     let path = clone_cstring_safely(path)?.to_string_lossy().into_owned();
     let argv = clone_cstrings_safely(argv)?;
     let envp = clone_cstrings_safely(envp)?;
     let file_actions = clone_file_actions_safely(fdop_list)?;
+    let spawn_attributes = clone_spawn_atrributes_safely(attribute_list)?;
     let current = current!();
     debug!(
-        "spawn: path: {:?}, argv: {:?}, envp: {:?}, fdop: {:?}",
-        path, argv, envp, file_actions
+        "spawn: path: {:?}, argv: {:?}, envp: {:?}, fdop: {:?}, spawn_attributes: {:?}",
+        path, argv, envp, file_actions, spawn_attributes
     );
 
-    let child_pid = super::do_spawn::do_spawn(&path, &argv, &envp, &file_actions, &current)?;
+    let child_pid = super::do_spawn::do_spawn(
+        &path,
+        &argv,
+        &envp,
+        &file_actions,
+        spawn_attributes,
+        &current,
+    )?;
 
     unsafe { *child_pid_ptr = child_pid };
     Ok(0)
@@ -91,19 +101,28 @@ pub fn do_spawn_for_glibc(
     argv: *const *const i8,
     envp: *const *const i8,
     fa: *const SpawnFileActions,
+    attribute_list: *const SpawnAttribute,
 ) -> Result<isize> {
     check_mut_ptr(child_pid_ptr)?;
     let path = clone_cstring_safely(path)?.to_string_lossy().into_owned();
     let argv = clone_cstrings_safely(argv)?;
     let envp = clone_cstrings_safely(envp)?;
     let file_actions = clone_file_actions_from_fa_safely(fa)?;
+    let spawn_attributes = clone_spawn_atrributes_safely(attribute_list)?;
     let current = current!();
     debug!(
-        "spawn: path: {:?}, argv: {:?}, envp: {:?}, actions: {:?}",
-        path, argv, envp, file_actions
+        "spawn: path: {:?}, argv: {:?}, envp: {:?}, actions: {:?}, spawn_attribute: {:?}",
+        path, argv, envp, file_actions, spawn_attributes
     );
 
-    let child_pid = super::do_spawn::do_spawn(&path, &argv, &envp, &file_actions, &current)?;
+    let child_pid = super::do_spawn::do_spawn(
+        &path,
+        &argv,
+        &envp,
+        &file_actions,
+        spawn_attributes,
+        &current,
+    )?;
 
     unsafe { *child_pid_ptr = child_pid };
     Ok(0)
@@ -199,6 +218,73 @@ fn clone_file_actions_from_fa_safely(fa_ptr: *const SpawnFileActions) -> Result<
     }
 
     Ok(file_actions)
+}
+
+// Glibc and musl use 128 bytes to represent sig_set_t
+type SpawnAttrSigSet = [sigset_t; 16];
+
+#[repr(C)]
+#[derive(Debug)]
+pub struct SpawnAttribute {
+    flags: SpawnAttributeFlags,
+    pgrp: i32,
+    sd: SpawnAttrSigSet,
+    ss: SpawnAttrSigSet,
+    sp: SchedParam,
+    policy: i32,
+    pad: [i32; 16],
+}
+
+#[repr(C)]
+#[derive(Debug)]
+struct SchedParam {
+    sched_priority: i32,
+}
+
+bitflags! {
+    pub struct SpawnAttributeFlags: u16 {
+        /// create file if it does not exist
+        const POSIX_SPAWN_RESETIDS = 1; // 0x1
+        /// error if CREATE and the file exists
+        const POSIX_SPAWN_SETPGROUP = 1 << 1; // 0x2
+        /// not become the process's controlling terminal
+        const POSIX_SPAWN_SETSIGDEF = 1 << 2; // 0x4
+        /// truncate file upon open
+        const POSIX_SPAWN_SETSIGMASK = 1 << 3; // 0x8
+        /// file is a directory
+        const POSIX_SPAWN_SETSCHEDPARAM = 1 << 4; // 0x10
+        /// pathname is not a symbolic link
+        const POSIX_SPAWN_SETSCHEDULER = 1 << 5; // 0x20
+    }
+}
+
+fn clone_spawn_atrributes_safely(attr_ptr: *const SpawnAttribute) -> Result<Option<SpawnAttr>> {
+    if attr_ptr != std::ptr::null() {
+        check_ptr(attr_ptr)?;
+    } else {
+        return Ok(None);
+    }
+
+    let spawn_attr = unsafe { &*attr_ptr };
+    debug!("spawn_attr = {:?}", spawn_attr);
+    let mut safe_attr = SpawnAttr::default();
+    if spawn_attr.flags.is_empty() {
+        return Ok(None);
+    }
+
+    if spawn_attr
+        .flags
+        .contains(SpawnAttributeFlags::POSIX_SPAWN_SETSIGDEF)
+    {
+        safe_attr.sig_default = Some(SigSet::from_c(spawn_attr.sd[0]));
+    }
+    if spawn_attr
+        .flags
+        .contains(SpawnAttributeFlags::POSIX_SPAWN_SETSIGMASK)
+    {
+        safe_attr.sig_mask = Some(SigSet::from_c(spawn_attr.ss[0]));
+    }
+    Ok(Some(safe_attr))
 }
 
 pub fn do_clone(
@@ -333,7 +419,7 @@ pub fn do_exit_group(status: i32) -> Result<isize> {
     Ok(0)
 }
 
-pub fn do_wait4(pid: i32, exit_status_ptr: *mut i32) -> Result<isize> {
+pub fn do_wait4(pid: i32, exit_status_ptr: *mut i32, options: i32) -> Result<isize> {
     if !exit_status_ptr.is_null() {
         check_mut_ptr(exit_status_ptr)?;
     }
@@ -349,7 +435,7 @@ pub fn do_wait4(pid: i32, exit_status_ptr: *mut i32) -> Result<isize> {
         _ => unreachable!(),
     };
     let mut exit_status = 0;
-    match super::do_wait4::do_wait4(&child_process_filter) {
+    match super::do_wait4::do_wait4(&child_process_filter, options) {
         Ok((pid, exit_status)) => {
             if !exit_status_ptr.is_null() {
                 unsafe {

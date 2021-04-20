@@ -1,4 +1,5 @@
 use super::*;
+use crate::time;
 use process::Process;
 
 pub use self::access::{do_faccessat, AccessibilityCheckFlags, AccessibilityCheckMode};
@@ -11,7 +12,7 @@ pub use self::fallocate::do_fallocate;
 pub use self::fcntl::{do_fcntl, FcntlCmd};
 pub use self::file_flags::{AccessMode, CreationFlags, StatusFlags};
 pub use self::flock::{Flock, FlockType};
-pub use self::fspath::{FsPath, AT_FDCWD};
+pub use self::fspath::{get_abs_path_by_fd, FsPath, AT_FDCWD};
 pub use self::fsync::{do_fdatasync, do_fsync};
 pub use self::ioctl::{
     do_ioctl, occlum_ocall_ioctl, BuiltinIoctlNum, IfConf, IoctlCmd, StructuredIoctlArgType,
@@ -26,6 +27,7 @@ pub use self::rename::do_renameat;
 pub use self::rmdir::do_rmdir;
 pub use self::sendfile::do_sendfile;
 pub use self::stat::{do_fstat, do_fstatat, Stat, StatFlags};
+// pub use self::statfs::{do_statfs, Statfs};
 pub use self::symlink::{do_readlinkat, do_symlinkat};
 pub use self::truncate::{do_ftruncate, do_truncate};
 pub use self::unlink::{do_unlinkat, UnlinkFlags};
@@ -53,6 +55,7 @@ mod rename;
 mod rmdir;
 mod sendfile;
 mod stat;
+mod statfs;
 mod symlink;
 mod truncate;
 mod unlink;

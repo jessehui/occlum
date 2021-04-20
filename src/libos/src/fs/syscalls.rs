@@ -146,6 +146,7 @@ pub fn do_fstat(fd: FileDesc, stat_buf: *mut Stat) -> Result<isize> {
     unsafe {
         stat_buf.write(stat);
     }
+
     Ok(0)
 }
 
@@ -175,6 +176,18 @@ pub fn do_fstatat(dirfd: i32, path: *const i8, stat_buf: *mut Stat, flags: u32) 
     }
     Ok(0)
 }
+
+// pub fn do_statfs(path: *const i8, stat_buf: *mut Statfs) -> Result<isize> {
+//     let path = from_user::clone_cstring_safely(path)?
+//     .to_string_lossy()
+//     .into_owned();
+
+//     let stat = file_ops::do_statfs(path)?;
+//     unsafe {
+//         stat_buf.write(stat);
+//     }
+//     Ok(0)
+// }
 
 pub fn do_access(path: *const i8, mode: u32) -> Result<isize> {
     self::do_faccessat(AT_FDCWD, path, mode, 0)

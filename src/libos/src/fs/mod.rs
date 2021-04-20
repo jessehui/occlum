@@ -16,15 +16,16 @@ pub use self::event_file::{AsEvent, EventCreationFlags, EventFile};
 pub use self::events::{AtomicIoEvents, IoEvents, IoNotifier};
 pub use self::file::{File, FileRef};
 pub use self::file_ops::{
-    occlum_ocall_ioctl, AccessMode, BuiltinIoctlNum, CreationFlags, FileMode, Flock, FlockType,
-    IfConf, IoctlCmd, Stat, StatusFlags, StructuredIoctlArgType, StructuredIoctlNum,
+    get_abs_path_by_fd, occlum_ocall_ioctl, AccessMode, BuiltinIoctlNum, CreationFlags, FileMode,
+    Flock, FlockType, IfConf, IoctlCmd, Stat, StatusFlags, StructuredIoctlArgType,
+    StructuredIoctlNum,
 };
 pub use self::file_table::{FileDesc, FileTable, FileTableEvent, FileTableNotifier};
 pub use self::fs_ops::Statfs;
 pub use self::fs_view::FsView;
 pub use self::host_fd::HostFd;
 pub use self::inode_file::{AsINodeFile, INodeExt, INodeFile};
-pub use self::pipe::PipeType;
+pub use self::pipe::{get_channel_id_from_fd, PipeType};
 pub use self::rootfs::ROOT_INODE;
 pub use self::stdio::{HostStdioFds, StdinFile, StdoutFile};
 pub use self::syscalls::*;

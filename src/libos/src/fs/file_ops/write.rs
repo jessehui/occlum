@@ -1,9 +1,23 @@
 use super::*;
 
 pub fn do_write(fd: FileDesc, buf: &[u8]) -> Result<usize> {
-    debug!("write: fd: {}", fd);
+    let path = get_abs_path_by_fd(fd);
+    if path.is_ok() {
+        warn!("write: fd: {}, path = {:?}", fd, path);
+    } else {
+        warn!(
+            "write: fd: {} (channel: {})",
+            fd,
+            get_channel_id_from_fd(fd).0
+        );
+    }
     let file_ref = current!().file(fd)?;
-    file_ref.write(buf)
+    let ret = file_ref.write(buf);
+    let string = std::str::from_utf8(&buf);
+    if string.is_ok() {
+        warn!("write buf: {:?}", string.unwrap());
+    }
+    return ret;
 }
 
 pub fn do_writev(fd: FileDesc, bufs: &[&[u8]]) -> Result<usize> {

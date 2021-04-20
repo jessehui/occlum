@@ -1,7 +1,17 @@
 use super::*;
 
 pub fn do_close(fd: FileDesc) -> Result<()> {
-    debug!("close: fd: {}", fd);
+    // debug!("close: fd: {}", fd);
+    let path = get_abs_path_by_fd(fd);
+    if path.is_ok() {
+        warn!("close: fd: {}, path = {:?}", fd, path);
+    } else {
+        warn!(
+            "close: fd: {} (channel: {})",
+            fd,
+            get_channel_id_from_fd(fd).0
+        );
+    }
     let current = current!();
     let mut files = current.files().lock().unwrap();
     let file = files.del(fd)?;

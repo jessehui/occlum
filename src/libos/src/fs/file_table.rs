@@ -157,6 +157,7 @@ impl FileTable {
             }
         }
 
+        debug!("close on spawn fds: {:?}", deleted_fds);
         for fd in deleted_fds {
             self.broadcast_del(fd);
         }

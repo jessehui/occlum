@@ -20,6 +20,12 @@ pub fn do_statfs(path: &str) -> Result<Statfs> {
     };
     let statfs = Statfs::from(inode.fs().info());
     trace!("statfs result: {:?}", statfs);
+    // {
+    //     use time::{timespec_t, do_nanosleep};
+    //     use std::time::Duration;
+    //     let mut u_rem: timespec_t = timespec_t::from(Duration::new(0, 30000));
+    //     do_nanosleep(&u_rem, None);
+    // }
     Ok(statfs)
 }
 

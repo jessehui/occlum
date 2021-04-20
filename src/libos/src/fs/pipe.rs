@@ -9,7 +9,9 @@ use net::PollEventFlags;
 pub const PIPE_BUF_SIZE: usize = 1024 * 1024;
 
 pub fn pipe(flags: StatusFlags) -> Result<(PipeReader, PipeWriter)> {
-    let (producer, consumer) = Channel::new(PIPE_BUF_SIZE)?.split();
+    let channel = Channel::new(PIPE_BUF_SIZE)?;
+    let channel_id = &channel.id();
+    let (producer, consumer) = channel.split();
 
     // Only O_NONBLOCK and O_DIRECT can be applied during pipe creation
     let valid_flags = flags & (StatusFlags::O_NONBLOCK | StatusFlags::O_DIRECT);
@@ -22,20 +24,36 @@ pub fn pipe(flags: StatusFlags) -> Result<(PipeReader, PipeWriter)> {
         PipeReader {
             consumer: consumer,
             status_flags: Atomic::new(valid_flags),
+            channel_id: *channel_id,
         },
         PipeWriter {
             producer: producer,
             status_flags: Atomic::new(valid_flags),
+            channel_id: *channel_id,
         },
     ))
+}
+
+pub trait PipeExt {
+    fn get_channel_id(&self) -> usize;
+    fn is_reader(&self) -> bool;
 }
 
 pub struct PipeReader {
     consumer: Consumer<u8>,
     status_flags: Atomic<StatusFlags>,
+    channel_id: usize,
 }
 
 impl File for PipeReader {
+    fn get_channel_id(&self) -> usize {
+        self.channel_id
+    }
+
+    fn is_reader(&self) -> bool {
+        true
+    }
+
     fn read(&self, buf: &mut [u8]) -> Result<usize> {
         self.consumer.pop_slice(buf)
     }
@@ -92,9 +110,18 @@ impl File for PipeReader {
 pub struct PipeWriter {
     producer: Producer<u8>,
     status_flags: Atomic<StatusFlags>,
+    channel_id: usize,
 }
 
 impl File for PipeWriter {
+    fn get_channel_id(&self) -> usize {
+        self.channel_id
+    }
+
+    fn is_reader(&self) -> bool {
+        false
+    }
+
     fn write(&self, buf: &[u8]) -> Result<usize> {
         self.producer.push_slice(buf)
     }
@@ -184,6 +211,12 @@ pub fn do_pipe2(flags: u32) -> Result<[FileDesc; 2]> {
     let writer_fd = current.add_file(Arc::new(pipe_writer), close_on_spawn);
     trace!("pipe2: reader_fd: {}, writer_fd: {}", reader_fd, writer_fd);
     Ok([reader_fd, writer_fd])
+}
+
+pub fn get_channel_id_from_fd(fd: FileDesc) -> (usize, bool) {
+    let file_ref = current!().file(fd).unwrap();
+    let channel_id = file_ref.get_channel_id();
+    return (channel_id, file_ref.is_reader());
 }
 
 pub trait PipeType {

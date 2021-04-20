@@ -6,10 +6,17 @@ pub fn do_rt_sigprocmask(
     op_and_set: Option<(MaskOp, &sigset_t)>,
     oldset: Option<&mut sigset_t>,
 ) -> Result<()> {
+    let old_set_copy = &oldset;
     debug!(
         "do_rt_sigprocmask: op_and_set: {:?}, oldset: {:?}",
         op_and_set.map(|(op, set)| (op, SigSet::from_c(*set))),
-        oldset
+        {
+            if old_set_copy.is_none() {
+                SigSet::new_empty()
+            } else {
+                SigSet::from_c(**old_set_copy.as_ref().unwrap())
+            }
+        }
     );
 
     let thread = current!();

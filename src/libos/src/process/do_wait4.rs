@@ -3,7 +3,9 @@ use super::wait::Waiter;
 use super::{table, ProcessRef, ProcessStatus};
 use crate::prelude::*;
 
-pub fn do_wait4(child_filter: &ProcessFilter) -> Result<(pid_t, i32)> {
+const WNOHANG: i32 = 1;
+
+pub fn do_wait4(child_filter: &ProcessFilter, options: i32) -> Result<(pid_t, i32)> {
     // Lock the process early to ensure that we do not miss any changes in
     // children processes
     let thread = current!();
@@ -34,6 +36,10 @@ pub fn do_wait4(child_filter: &ProcessFilter) -> Result<(pid_t, i32)> {
         let zombie_pid = zombie_child.pid();
         let exit_status = free_zombie_child(process_inner, zombie_pid);
         return Ok((zombie_pid, exit_status));
+    }
+
+    if options == WNOHANG {
+        return Ok((0, 0));
     }
 
     let mut waiter = Waiter::new(child_filter);

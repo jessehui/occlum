@@ -15,6 +15,12 @@ macro_rules! return_op_unsupported_error {
 }
 
 pub trait File: Debug + Sync + Send + Any {
+    fn get_channel_id(&self) -> usize {
+        0
+    }
+    fn is_reader(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> Result<usize> {
         return_op_unsupported_error!("read")
     }

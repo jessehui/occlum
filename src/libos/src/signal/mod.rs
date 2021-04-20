@@ -2,12 +2,13 @@
 
 use crate::prelude::*;
 
-use sig_action::{SigAction, SigActionFlags, SigDefaultAction};
+use sig_action::{SigActionFlags, SigDefaultAction};
 
 pub use self::c_types::{sigaction_t, siginfo_t, sigset_t, stack_t};
 pub use self::constants::*;
 pub use self::do_kill::do_kill_from_outside_enclave;
 pub use self::do_sigreturn::{deliver_signal, force_signal};
+pub use self::sig_action::SigAction;
 pub use self::sig_dispositions::SigDispositions;
 pub use self::sig_num::SigNum;
 pub use self::sig_queues::SigQueues;

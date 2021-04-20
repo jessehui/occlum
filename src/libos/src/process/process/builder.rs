@@ -6,7 +6,7 @@ use super::super::{
 };
 use super::{Process, ProcessInner};
 use crate::prelude::*;
-use crate::signal::{SigDispositions, SigQueues};
+use crate::signal::{SigDispositions, SigQueues, SigSet};
 
 #[derive(Debug)]
 pub struct ProcessBuilder {
@@ -18,6 +18,7 @@ pub struct ProcessBuilder {
     exec_path: Option<String>,
     parent: Option<ProcessRef>,
     no_parent: bool,
+    sig_dispositions: Option<SigDispositions>,
 }
 
 impl ProcessBuilder {
@@ -30,6 +31,7 @@ impl ProcessBuilder {
             exec_path: None,
             parent: None,
             no_parent: false,
+            sig_dispositions: None,
         }
     }
 
@@ -50,6 +52,11 @@ impl ProcessBuilder {
 
     pub fn no_parent(mut self, no_parent: bool) -> Self {
         self.no_parent = no_parent;
+        self
+    }
+
+    pub fn sig_dispositions(mut self, sig_dispositions: SigDispositions) -> Self {
+        self.sig_dispositions = Some(sig_dispositions);
         self
     }
 
@@ -77,6 +84,14 @@ impl ProcessBuilder {
         self.thread_builder(|tb| tb.rlimits(rlimits))
     }
 
+    pub fn sig_mask(mut self, sigmask: SigSet) -> Self {
+        self.thread_builder(|tb| tb.sig_mask(sigmask))
+    }
+
+    // pub fn sig_dispositions(mut self, sig_dispositions: SigDispositions) -> Self {
+    //     self.thread_builder(|tb| tb.sig_dispositions(sig_dispositions))
+    // }
+
     pub fn name(mut self, name: ThreadName) -> Self {
         self.thread_builder(|tb| tb.name(name))
     }
@@ -99,7 +114,8 @@ impl ProcessBuilder {
             let exec_path = self.exec_path.take().unwrap_or_default();
             let parent = self.parent.take().map(|parent| RwLock::new(parent));
             let inner = SgxMutex::new(ProcessInner::new());
-            let sig_dispositions = RwLock::new(SigDispositions::new());
+            // let sig_dispositions = RwLock::new(SigDispositions::new());
+            let sig_dispositions = RwLock::new(self.sig_dispositions.unwrap_or_default());
             let sig_queues = RwLock::new(SigQueues::new());
             let forced_exit_status = ForcedExitStatus::new();
             Arc::new(Process {

@@ -3,15 +3,24 @@ use std::sync::Weak;
 
 use ringbuf::{Consumer as RbConsumer, Producer as RbProducer, RingBuffer};
 
+use super::*;
 use super::{IoEvents, IoNotifier};
 use crate::events::{Event, EventFilter, Notifier, Observer, Waiter, WaiterQueueObserver};
 use crate::prelude::*;
+use crate::util::random;
 
 /// A unidirectional communication channel, intended to implement IPC, e.g., pipe,
 /// unix domain sockets, etc.
 pub struct Channel<I> {
     producer: Producer<I>,
     consumer: Consumer<I>,
+    id: usize,
+}
+
+impl<I> Debug for Channel<I> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.id)
+    }
 }
 
 impl<I> Channel<I> {
@@ -42,8 +51,15 @@ impl<I> Channel<I> {
             None,
             None,
         );
+        let mut random_buf: [u8; 8] = [0u8; 8]; // same length as usize
+        random::get_random(&mut random_buf).expect("failed to get random number");
+        let random_num: usize = u64::from_le_bytes(random_buf) as usize;
 
-        Ok(Self { producer, consumer })
+        Ok(Self {
+            producer,
+            consumer,
+            id: random_num,
+        })
     }
 
     /// Push an item into the channel.
@@ -73,8 +89,16 @@ impl<I> Channel<I> {
 
     /// Turn the channel into a pair of producer and consumer.
     pub fn split(self) -> (Producer<I>, Consumer<I>) {
-        let Channel { producer, consumer } = self;
+        let Channel {
+            producer,
+            consumer,
+            id,
+        } = self;
         (producer, consumer)
+    }
+
+    pub fn id(&self) -> usize {
+        self.id
     }
 
     pub fn consumer(&self) -> &Consumer<I> {
