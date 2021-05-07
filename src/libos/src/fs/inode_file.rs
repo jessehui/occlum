@@ -202,10 +202,17 @@ impl File for INodeFile {
         Ok(())
     }
 
-    fn ioctl(&self, cmd: &mut IoctlCmd) -> Result<i32> {
+    fn ioctl(&self, fd: FileDesc, cmd: &mut IoctlCmd) -> Result<i32> {
         match cmd {
             IoctlCmd::TCGETS(_) => return_errno!(ENOTTY, "not tty device"),
             IoctlCmd::TCSETS(_) => return_errno!(ENOTTY, "not tty device"),
+            IoctlCmd::FIOCLEX(_) => {
+                let current = current!();
+                let mut file_table = current.files().lock().unwrap();
+                let mut entry = file_table.get_entry_mut(fd)?;
+                entry.set_close_on_spawn(true);
+                return Ok(0);
+            }
             _ => {}
         };
         let cmd_num = cmd.cmd_num();

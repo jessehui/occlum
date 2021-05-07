@@ -88,8 +88,8 @@ impl File for PipeReader {
         self
     }
 
-    fn ioctl(&self, cmd: &mut IoctlCmd) -> Result<i32> {
-        ioctl_inner(cmd)
+    fn ioctl(&self, fd: FileDesc, cmd: &mut IoctlCmd) -> Result<i32> {
+        ioctl_inner(fd, cmd)
     }
 }
 
@@ -155,8 +155,8 @@ impl File for PipeWriter {
         self
     }
 
-    fn ioctl(&self, cmd: &mut IoctlCmd) -> Result<i32> {
-        ioctl_inner(cmd)
+    fn ioctl(&self, fd: FileDesc, cmd: &mut IoctlCmd) -> Result<i32> {
+        ioctl_inner(fd, cmd)
     }
 }
 
@@ -211,10 +211,16 @@ impl PipeType for FileRef {
     }
 }
 
-fn ioctl_inner(cmd: &mut IoctlCmd) -> Result<i32> {
+fn ioctl_inner(fd: FileDesc, cmd: &mut IoctlCmd) -> Result<i32> {
     match cmd {
         IoctlCmd::TCGETS(_) => return_errno!(ENOTTY, "not tty device"),
         IoctlCmd::TCSETS(_) => return_errno!(ENOTTY, "not tty device"),
+        IoctlCmd::FIOCLEX(_) => {
+            let current = current!();
+            let mut file_table = current.files().lock().unwrap();
+            let mut entry = file_table.get_entry_mut(fd)?;
+            entry.set_close_on_spawn(true);
+        }
         _ => return_errno!(ENOSYS, "not supported"),
     };
     unreachable!();

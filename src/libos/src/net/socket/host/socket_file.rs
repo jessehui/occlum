@@ -46,7 +46,7 @@ impl File for HostSocket {
         return_errno!(ESPIPE, "Socket does not support seek")
     }
 
-    fn ioctl(&self, cmd: &mut IoctlCmd) -> Result<i32> {
+    fn ioctl(&self, fd: FileDesc, cmd: &mut IoctlCmd) -> Result<i32> {
         self.ioctl_impl(cmd)
     }
 

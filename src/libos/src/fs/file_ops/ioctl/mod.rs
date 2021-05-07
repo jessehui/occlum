@@ -42,6 +42,10 @@ impl_ioctl_nums_and_cmds! {
     TIOCNOTTY => (0x5422, ()),
     // Get the number of bytes in the input buffer
     FIONREAD => (0x541B, mut i32),
+    // Don't close on exec
+    FIONCLEX => (0x5450, ()),
+    // Set close on exec
+    FIOCLEX => (0x5451, ()),
     // Low-level access to Linux network devices on man7/netdevice.7
     // Only non-privileged operations are supported for now
     SIOCGIFNAME => (0x8910, mut IfReq),
@@ -95,7 +99,7 @@ impl<'a> IoctlCmd<'a> {
 pub fn do_ioctl(fd: FileDesc, cmd: &mut IoctlCmd) -> Result<i32> {
     debug!("ioctl: fd: {}, cmd: {:?}", fd, cmd);
     let file_ref = current!().file(fd)?;
-    file_ref.ioctl(cmd)
+    file_ref.ioctl(fd, cmd)
 }
 
 extern "C" {
