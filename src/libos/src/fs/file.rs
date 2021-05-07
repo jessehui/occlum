@@ -67,7 +67,7 @@ pub trait File: Debug + Sync + Send + Any {
         Ok(())
     }
 
-    fn ioctl(&self, cmd: &mut IoctlCmd) -> Result<i32> {
+    fn ioctl(&self, fd: FileDesc, cmd: &mut IoctlCmd) -> Result<i32> {
         return_op_unsupported_error!("ioctl")
     }
 

@@ -53,7 +53,7 @@ impl File for Stream {
         }
     }
 
-    fn ioctl(&self, cmd: &mut IoctlCmd) -> Result<i32> {
+    fn ioctl(&self, fd: FileDesc, cmd: &mut IoctlCmd) -> Result<i32> {
         match cmd {
             IoctlCmd::FIONREAD(arg) => match &*self.inner() {
                 Status::Connected(endpoint) => {
