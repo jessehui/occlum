@@ -3,17 +3,18 @@ use std::ptr;
 use super::super::elf_file::ElfFile;
 use crate::misc::{resource_t, rlimit_t};
 use crate::prelude::*;
-use crate::vm::{ProcessVM, ProcessVMBuilder};
+use crate::vm::{ProcessVM, ProcessVMBuilder, ProcessVMManager, VMRange};
 
 pub fn do_init<'a, 'b>(
     elf_file: &'b ElfFile<'a>,
     ldso_elf_file: &'b ElfFile<'a>,
+    reuse_vm: Option<Arc<ProcessVMManager>>,
 ) -> Result<ProcessVM> {
     let mut process_vm = if current!().process().pid() == 0 {
         // Parent process is idle process and we can skip checking rlimit because main
         // process will directly use memory configuration in Occlum.json
         ProcessVMBuilder::new(vec![elf_file, ldso_elf_file])
-            .build()
+            .build(None)
             .cause_err(|e| errno!(e.errno(), "failed to create process VM"))?
     } else {
         // Parent process is not idle process. Inherit parent process's resource limit.
@@ -33,7 +34,7 @@ pub fn do_init<'a, 'b>(
             .set_stack_size(child_stack_size as usize)
             .set_mmap_size(child_mmap_size as usize)
             .clone()
-            .build()
+            .build(reuse_vm)
             .cause_err(|e| errno!(e.errno(), "failed to create process VM"))?
     };
 

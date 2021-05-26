@@ -54,6 +54,7 @@ pub enum ThreadStatus {
     Init,
     Running,
     Exited,
+    Freezed,
 }
 
 impl Thread {
@@ -248,6 +249,7 @@ pub enum ThreadInner {
     Init,
     Running,
     Exited { term_status: TermStatus },
+    Freezed,
 }
 
 impl ThreadInner {
@@ -260,23 +262,38 @@ impl ThreadInner {
             Self::Init { .. } => ThreadStatus::Init,
             Self::Running { .. } => ThreadStatus::Running,
             Self::Exited { .. } => ThreadStatus::Exited,
+            Self::Freezed { .. } => ThreadStatus::Freezed,
         }
     }
 
     pub fn term_status(&self) -> Option<TermStatus> {
         match self {
             Self::Exited { term_status } => Some(*term_status),
+            Self::Freezed { .. } => Some(TermStatus::Freezed),
             _ => None,
         }
     }
 
     pub fn start(&mut self) {
-        debug_assert!(self.status() == ThreadStatus::Init);
+        debug_assert!(
+            self.status() == ThreadStatus::Init
+                || self.status() == ThreadStatus::Freezed
+                || self.status() == ThreadStatus::Running
+        );
         *self = Self::Running;
     }
 
     pub fn exit(&mut self, term_status: TermStatus) {
-        debug_assert!(self.status() == ThreadStatus::Running);
+        debug_assert!(
+            self.status() == ThreadStatus::Running || self.status() == ThreadStatus::Freezed
+        );
         *self = Self::Exited { term_status };
+    }
+
+    pub fn freeze(&mut self) {
+        debug_assert!(
+            self.status() == ThreadStatus::Running || self.status() == ThreadStatus::Init
+        );
+        *self = Self::Freezed;
     }
 }

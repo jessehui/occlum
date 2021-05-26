@@ -60,7 +60,7 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
         random_num % range
     }
 
-    pub fn build(self) -> Result<ProcessVM> {
+    pub fn build(self, reuse_process_vm: Option<Arc<ProcessVMManager>>) -> Result<ProcessVM> {
         self.validate()?;
 
         let heap_size = self
@@ -108,17 +108,69 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
 
         // Now that we end up with the memory layout required by the process,
         // let's allocate the memory for the process
-        let process_range = {
-            // TODO: ensure alignment through USER_SPACE_VM_MANAGER, not by
-            // preserving extra space for alignment
-            USER_SPACE_VM_MANAGER.alloc(process_layout.align() + process_layout.size())?
-        };
+        // TODO: ensure alignment through USER_SPACE_VM_MANAGER, not by
+        // preserving extra space for alignment
+        let new_process_size = process_layout.align() + process_layout.size();
+
+        // Reuse old VM if possible
+        if let Some(old_vm) = reuse_process_vm {
+            let old_range = old_vm.process_range().range();
+            if old_range.size() >= new_process_size {
+                let mut vm_manager = old_vm.vm_manager();
+                let process_range = old_vm.process_range();
+
+                let (elf_ranges, heap_range, stack_range, brk) = self.init_process_range(
+                    elf_layouts,
+                    other_layouts,
+                    process_range,
+                    &mut vm_manager,
+                )?;
+                return Ok(ProcessVM {
+                    elf_ranges,
+                    heap_range,
+                    stack_range,
+                    brk,
+                    process_vm_manager: old_vm.clone(),
+                });
+            }
+        }
+
+        // No VM reuse. Alloc new space.
+        // Note: If there is reuse_vm but not enough space, no need to free because if it is not used,
+        // it will be dropped when the thread exits.
+        let process_range = { USER_SPACE_VM_MANAGER.alloc(new_process_size)? };
         let process_base = process_range.range().start();
+
         // Use the vm_manager to manage the whole process VM (including mmap region)
         let mut vm_manager = VMManager::from(process_base, process_range.range().size())?;
         // Note: we do not need to fill zeros of the mmap region.
         // VMManager will fill zeros (if necessary) on mmap.
 
+        let (elf_ranges, heap_range, stack_range, brk) =
+            self.init_process_range(elf_layouts, other_layouts, &process_range, &mut vm_manager)?;
+        let vm_manager = SgxMutex::new(vm_manager);
+        let process_vm_manager = ProcessVMManager {
+            vm_manager,
+            process_range,
+        };
+
+        Ok(ProcessVM {
+            elf_ranges,
+            heap_range,
+            stack_range,
+            brk,
+            process_vm_manager: Arc::new(process_vm_manager),
+        })
+    }
+
+    fn init_process_range(
+        &self,
+        elf_layouts: Vec<VMLayout>,
+        other_layouts: Vec<VMLayout>,
+        process_range: &UserSpaceVMRange,
+        vm_manager: &mut VMManager,
+    ) -> Result<(Vec<VMRange>, VMRange, VMRange, AtomicUsize)> {
+        let process_base = process_range.range().start();
         // Tracker to track the min_start for each part
         let mut min_start =
             process_base + Self::get_randomize_offset(process_range.range().size() >> 3);
@@ -182,16 +234,7 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
 
         // Set mmap prefered start address
         vm_manager.set_mmap_prefered_start_addr(min_start);
-        let vm_manager = SgxMutex::new(vm_manager);
-
-        Ok(ProcessVM {
-            process_range,
-            elf_ranges,
-            heap_range,
-            stack_range,
-            brk,
-            vm_manager,
-        })
+        return Ok((elf_ranges, heap_range, stack_range, brk));
     }
 
     fn validate(&self) -> Result<()> {
@@ -258,39 +301,70 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
     }
 }
 
+// manage the whole process VM
+#[derive(Debug)]
+pub struct ProcessVMManager {
+    vm_manager: SgxMutex<VMManager>,
+
+    // process_range is managed by SGX reserved memory API and thus should be
+    // dropped at last to prevent segmentation fault.
+    process_range: UserSpaceVMRange,
+}
+
+impl Default for ProcessVMManager {
+    fn default() -> Self {
+        Self {
+            vm_manager: SgxMutex::new(Default::default()),
+            process_range: USER_SPACE_VM_MANAGER.alloc_dummy(),
+        }
+    }
+}
+
+impl ProcessVMManager {
+    pub fn process_range(&self) -> &UserSpaceVMRange {
+        &self.process_range
+    }
+
+    pub fn vm_manager(&self) -> SgxMutexGuard<VMManager> {
+        self.vm_manager.lock().unwrap()
+    }
+}
+
 /// The per-process virtual memory
 #[derive(Debug)]
 pub struct ProcessVM {
-    vm_manager: SgxMutex<VMManager>, // manage the whole process VM
     elf_ranges: Vec<VMRange>,
     heap_range: VMRange,
     stack_range: VMRange,
     brk: AtomicUsize,
-    // Memory safety notes: the process_range field must be the last one.
+    // Memory safety notes: the process_vm_manager field must be the last one.
     //
     // Rust drops fields in the same order as they are declared. So by making
-    // process_range the last field, we ensure that when all other fields are
+    // process_vm_manager the last field, we ensure that when all other fields are
     // dropped, their drop methods (if provided) can still access the memory
-    // region represented by the process_range field.
-    process_range: UserSpaceVMRange,
+    // region represented by the process_vm_manager field.
+    process_vm_manager: Arc<ProcessVMManager>,
 }
 
 impl Default for ProcessVM {
     fn default() -> ProcessVM {
         ProcessVM {
-            process_range: USER_SPACE_VM_MANAGER.alloc_dummy(),
             elf_ranges: Default::default(),
             heap_range: Default::default(),
             stack_range: Default::default(),
             brk: Default::default(),
-            vm_manager: Default::default(),
+            process_vm_manager: Arc::new(Default::default()),
         }
     }
 }
 
 impl ProcessVM {
     pub fn get_process_range(&self) -> &VMRange {
-        self.process_range.range()
+        self.process_vm_manager.process_range().range()
+    }
+
+    pub fn get_process_vm_manager(&self) -> Arc<ProcessVMManager> {
+        self.process_vm_manager.clone()
     }
 
     pub fn get_elf_ranges(&self) -> &[VMRange] {
@@ -321,6 +395,10 @@ impl ProcessVM {
         self.brk.load(Ordering::SeqCst)
     }
 
+    pub fn get_vm_manager(&self) -> SgxMutexGuard<VMManager> {
+        self.process_vm_manager.vm_manager()
+    }
+
     pub fn brk(&self, new_brk: usize) -> Result<usize> {
         let heap_start = self.heap_range.start();
         let heap_end = self.heap_range.end();
@@ -349,7 +427,7 @@ impl ProcessVM {
     ) -> Result<usize> {
         let addr_option = {
             if flags.contains(MMapFlags::MAP_FIXED) {
-                if !self.process_range.range().contains(addr) {
+                if !self.process_vm_manager.process_range.range().contains(addr) {
                     return_errno!(EINVAL, "Beyond valid memory range");
                 }
                 VMMapAddr::Force(addr)
@@ -389,7 +467,7 @@ impl ProcessVM {
             .initializer(initializer)
             .writeback_file(writeback_file)
             .build()?;
-        let mmap_addr = self.vm_manager.lock().unwrap().mmap(mmap_options)?;
+        let mmap_addr = self.get_vm_manager().mmap(mmap_options)?;
         Ok(mmap_addr)
     }
 
@@ -401,17 +479,22 @@ impl ProcessVM {
         flags: MRemapFlags,
     ) -> Result<usize> {
         if let Some(new_addr) = flags.new_addr() {
-            if !self.process_range.range().contains(new_addr) {
+            if !self
+                .process_vm_manager
+                .process_range
+                .range()
+                .contains(new_addr)
+            {
                 return_errno!(EINVAL, "new_addr is beyond valid memory range");
             }
         }
 
         let mremap_option = VMRemapOptions::new(old_addr, old_size, new_size, flags)?;
-        self.vm_manager.lock().unwrap().mremap(&mremap_option)
+        self.get_vm_manager().mremap(&mremap_option)
     }
 
     pub fn munmap(&self, addr: usize, size: usize) -> Result<()> {
-        self.vm_manager.lock().unwrap().munmap(addr, size)
+        self.get_vm_manager().munmap(addr, size)
     }
 
     pub fn mprotect(&self, addr: usize, size: usize, perms: VMPerms) -> Result<()> {
@@ -422,10 +505,15 @@ impl ProcessVM {
             align_up(size, PAGE_SIZE)
         };
         let protect_range = VMRange::new_with_size(addr, size)?;
-        if !self.process_range.range().is_superset_of(&protect_range) {
+        if !self
+            .process_vm_manager
+            .process_range
+            .range()
+            .is_superset_of(&protect_range)
+        {
             return_errno!(ENOMEM, "invalid range");
         }
-        let mut mmap_manager = self.vm_manager.lock().unwrap();
+        let mut mmap_manager = self.get_vm_manager();
 
         // TODO: support mprotect vm regions in addition to mmap
         if !mmap_manager.range().is_superset_of(&protect_range) {
@@ -438,20 +526,18 @@ impl ProcessVM {
 
     pub fn msync(&self, addr: usize, size: usize) -> Result<()> {
         let sync_range = VMRange::new_with_size(addr, size)?;
-        let mut mmap_manager = self.vm_manager.lock().unwrap();
+        let mut mmap_manager = self.get_vm_manager();
         mmap_manager.msync_by_range(&sync_range)
     }
 
     pub fn msync_by_file(&self, sync_file: &FileRef) {
-        let mut mmap_manager = self.vm_manager.lock().unwrap();
+        let mut mmap_manager = self.get_vm_manager();
         mmap_manager.msync_by_file(sync_file);
     }
 
     // Return: a copy of the found region
     pub fn find_mmap_region(&self, addr: usize) -> Result<VMRange> {
-        self.vm_manager
-            .lock()
-            .unwrap()
+        self.get_vm_manager()
             .find_mmap_region(addr)
             .map(|range_ref| *range_ref)
     }

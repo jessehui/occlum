@@ -113,6 +113,7 @@ impl ProcessBuilder {
             let sig_dispositions = RwLock::new(self.sig_dispositions.unwrap_or_default());
             let sig_queues = RwLock::new(SigQueues::new());
             let forced_exit_status = ForcedExitStatus::new();
+            let freeze = SgxMutex::new(false);
             Arc::new(Process {
                 pid,
                 exec_path,
@@ -121,6 +122,7 @@ impl ProcessBuilder {
                 sig_dispositions,
                 sig_queues,
                 forced_exit_status,
+                freeze,
             })
         };
 
