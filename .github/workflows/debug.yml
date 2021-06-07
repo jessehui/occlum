@@ -1,0 +1,44 @@
+name: Debug with SSH
+
+# This is a manual trigger. And users can specify branch name.
+on: [workflow_dispatch]
+
+jobs:
+  Debug_on_github_actions_machine:
+    runs-on: ubuntu-18.04
+
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        submodules: true
+
+    - name: Get occlum version
+      run: echo "OCCLUM_VERSION=$(grep 'Version =' src/pal/include/occlum_version.h | awk '{print $4}')" >> $GITHUB_ENV;
+
+    - name: Create container with ubuntu image
+      run: docker run -itd --privileged --name=ubuntu-debug -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
+
+    - name: Build dependencies
+      run:  docker exec ubuntu-debug bash -c "cd /root/occlum; make submodule"
+
+    # - name: Build source
+    #   run:  docker exec ubuntu-debug bash -c "source /opt/intel/sgxsdk/environment; cd /root/occlum; SGX_MODE=SIM make"
+
+    - name: Echo attach command
+      run: |
+        echo "After login with SSH, please execute below command to get into docker env:"
+        echo "docker exec -it ubuntu-debug bash"
+
+    - name: Start SSH session
+      uses: luchihoratiu/debug-via-ssh@main
+      with:
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_TOKEN }}
+        SSH_PASS: ${{ secrets.SSH_LOGIN_PASS }}
+        NGROK_REGION: ap  #Asia/Pacific
+        NGROK_TIMEOUT: 43200  # 12 Hours
+
+    # - name: Setup tmate session
+    #   uses: mxschmitt/action-tmate@v3
+
+    # - name: Setup upterm session
+    #   uses: lhotari/action-upterm@v1
