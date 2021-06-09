@@ -5,15 +5,16 @@ use self::aux_vec::{AuxKey, AuxVec};
 use self::exec_loader::{load_exec_file_hdr_to_vec, load_file_hdr_to_vec};
 use super::elf_file::{ElfFile, ElfHeader, ProgramHeaderExt};
 use super::process::ProcessBuilder;
+use super::process::ProcessStatus;
 use super::spawn_attribute::SpawnAttr;
 use super::task::Task;
-use super::thread::ThreadName;
+use super::thread::{ThreadId, ThreadName};
 use super::{table, task, ProcessRef, ThreadRef};
 use crate::fs::{
     CreationFlags, File, FileDesc, FileTable, FsView, HostStdioFds, StdinFile, StdoutFile,
 };
 use crate::prelude::*;
-use crate::vm::ProcessVM;
+use crate::vm::{ProcessVM, ProcessVMManager};
 
 mod aux_vec;
 mod exec_loader;
@@ -108,6 +109,59 @@ fn new_process(
     host_stdio_fds: Option<&HostStdioFds>,
     current_ref: &ThreadRef,
 ) -> Result<ProcessRef> {
+    let new_process_ref = new_process_common(
+        file_path,
+        argv,
+        envp,
+        file_actions,
+        spawn_attributes,
+        host_stdio_fds,
+        current_ref,
+        None,
+        None,
+    )?;
+    table::add_process(new_process_ref.clone());
+    table::add_thread(new_process_ref.main_thread().unwrap());
+
+    Ok(new_process_ref)
+}
+
+/// Create a new process for execve which will use same parent, pid, tid
+pub fn new_process_for_exec(
+    file_path: &str,
+    argv: &[CString],
+    envp: &[CString],
+    current_ref: &ThreadRef,
+) -> Result<ProcessRef> {
+    let tid = ThreadId {
+        tid: current_ref.process().pid() as u32,
+    };
+    let new_process_ref = new_process_common(
+        file_path,
+        argv,
+        envp,
+        &Vec::new(),
+        None,
+        None,
+        current_ref,
+        Some(tid),
+        None,
+    )?;
+
+    Ok(new_process_ref)
+}
+
+fn new_process_common(
+    file_path: &str,
+    argv: &[CString],
+    envp: &[CString],
+    file_actions: &[FileAction],
+    spawn_attributes: Option<SpawnAttr>,
+    host_stdio_fds: Option<&HostStdioFds>,
+    current_ref: &ThreadRef,
+    reuse_tid: Option<ThreadId>,
+    reuse_vm: Option<Arc<ProcessVMManager>>, // TODO: This could be used to implement vfork
+) -> Result<ProcessRef> {
     let mut argv = argv.clone().to_vec();
     let (is_script, elf_inode, mut elf_buf, elf_header) =
         load_exec_file_hdr_to_vec(file_path, current_ref)?;
@@ -145,7 +199,7 @@ fn new_process(
     let new_process_ref = {
         let process_ref = current_ref.process().clone();
 
-        let vm = init_vm::do_init(&exec_elf_hdr, &ldso_elf_hdr)?;
+        let vm = init_vm::do_init(&exec_elf_hdr, &ldso_elf_hdr, reuse_vm)?;
         let mut auxvec = init_auxvec(&vm, &exec_elf_hdr)?;
 
         // Notify debugger to load the symbols from elf file
@@ -223,10 +277,19 @@ fn new_process(
         let elf_name = elf_path.rsplit('/').collect::<Vec<&str>>()[0];
         let thread_name = ThreadName::new(elf_name);
 
-        ProcessBuilder::new()
+        let mut parent;
+        let mut process_builder = ProcessBuilder::new();
+        if reuse_tid.is_some() {
+            process_builder = process_builder.tid(reuse_tid.unwrap());
+            parent = current!().process().parent();
+        } else {
+            parent = process_ref;
+        }
+
+        process_builder
             .vm(vm_ref)
             .exec_path(&elf_path)
-            .parent(process_ref)
+            .parent(parent)
             .task(task)
             .sched(sched_ref)
             .rlimits(rlimit_ref)
@@ -237,9 +300,6 @@ fn new_process(
             .sig_dispositions(sig_dispositions)
             .build()?
     };
-
-    table::add_process(new_process_ref.clone());
-    table::add_thread(new_process_ref.main_thread().unwrap());
 
     info!(
         "Process created: elf = {}, pid = {}",

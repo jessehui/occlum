@@ -40,10 +40,10 @@ use crate::net::{
     do_shutdown, do_socket, do_socketpair, mmsghdr, msghdr, msghdr_mut,
 };
 use crate::process::{
-    do_arch_prctl, do_clone, do_exit, do_exit_group, do_futex, do_getegid, do_geteuid, do_getgid,
-    do_getpgid, do_getpid, do_getppid, do_gettid, do_getuid, do_prctl, do_set_tid_address,
-    do_spawn_for_glibc, do_spawn_for_musl, do_wait4, pid_t, posix_spawnattr_t, FdOp,
-    SpawnFileActions, ThreadStatus,
+    do_arch_prctl, do_clone, do_execve, do_exit, do_exit_group, do_futex, do_getegid, do_geteuid,
+    do_getgid, do_getpgid, do_getpid, do_getppid, do_gettid, do_getuid, do_prctl,
+    do_set_tid_address, do_spawn_for_glibc, do_spawn_for_musl, do_wait4, pid_t, posix_spawnattr_t,
+    FdOp, SpawnFileActions, ThreadStatus,
 };
 use crate::sched::{do_getcpu, do_sched_getaffinity, do_sched_setaffinity, do_sched_yield};
 use crate::signal::{
@@ -144,7 +144,7 @@ macro_rules! process_syscall_table_with_callback {
             (Clone = 56) => do_clone(flags: u32, stack_addr: usize, ptid: *mut pid_t, ctid: *mut pid_t, new_tls: usize),
             (Fork = 57) => handle_unsupported(),
             (Vfork = 58) => handle_unsupported(),
-            (Execve = 59) => handle_unsupported(),
+            (Execve = 59) => do_execve(path: *const i8, argv: *const *const i8, envp: *const *const i8),
             (Exit = 60) => do_exit(exit_status: i32),
             (Wait4 = 61) => do_wait4(pid: i32, _exit_status: *mut i32, options: u32),
             (Kill = 62) => do_kill(pid: i32, sig: c_int),
@@ -729,24 +729,39 @@ fn do_sysret(user_context: &mut CpuContext) -> ! {
         fn __occlum_sysret(user_context: *mut CpuContext) -> !;
         fn do_exit_task() -> !;
     }
-    if current!().status() != ThreadStatus::Exited {
-        // Restore the floating point registers
-        // Todo: Is it correct to do fxstor in kernel?
-        let fpregs = user_context.fpregs;
-        if (fpregs != ptr::null_mut()) {
-            if user_context.fpregs_on_heap == 1 {
-                let fpregs = unsafe { Box::from_raw(user_context.fpregs as *mut FpRegs) };
-                fpregs.restore();
-            } else {
-                unsafe { fpregs.as_ref().unwrap().restore() };
+    // Thread could be freezed. And thus when unfreezed, it needs to check the status again.
+    loop {
+        if current!().status() != ThreadStatus::Exited
+            && current!().status() != ThreadStatus::Freezed
+        {
+            // Restore the floating point registers
+            // Todo: Is it correct to do fxstor in kernel?
+            let fpregs = user_context.fpregs;
+            if (fpregs != ptr::null_mut()) {
+                if user_context.fpregs_on_heap == 1 {
+                    let fpregs = unsafe { Box::from_raw(user_context.fpregs as *mut FpRegs) };
+                    fpregs.restore();
+                } else {
+                    unsafe { fpregs.as_ref().unwrap().restore() };
+                }
             }
+            unsafe { __occlum_sysret(user_context) } // jump to user space
+        } else if current!().status() == ThreadStatus::Freezed {
+            let current = current!();
+            // Try to get the lock. It is actully used to freeze this thread.
+            let mut status = current.process().freeze();
+            // Once we get the lock, it means the "freeze" ends.
+            debug_assert!(*status == false);
+            // It may have been a long time. Handle force exit again.
+            crate::process::handle_force_exit();
+            // Thread status updated. Check again.
+            continue;
+        } else {
+            if user_context.fpregs != ptr::null_mut() && user_context.fpregs_on_heap == 1 {
+                drop(unsafe { Box::from_raw(user_context.fpregs as *mut FpRegs) });
+            }
+            unsafe { do_exit_task() } // exit enclave
         }
-        unsafe { __occlum_sysret(user_context) } // jump to user space
-    } else {
-        if user_context.fpregs != ptr::null_mut() && user_context.fpregs_on_heap == 1 {
-            drop(unsafe { Box::from_raw(user_context.fpregs as *mut FpRegs) });
-        }
-        unsafe { do_exit_task() } // exit enclave
     }
     unreachable!("__occlum_sysret never returns!");
 }

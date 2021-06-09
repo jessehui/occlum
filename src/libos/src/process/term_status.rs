@@ -1,11 +1,13 @@
 //! The termination status of a process or thread.
 
+use crate::pid_t;
 use crate::signal::SigNum;
 use sgx_tstd::sync::SgxMutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct ForcedExitStatus {
     exited: AtomicBool,
+    freezed: AtomicBool,
     status: SgxMutex<Option<TermStatus>>,
 }
 
@@ -13,6 +15,7 @@ impl ForcedExitStatus {
     pub fn new() -> Self {
         Self {
             exited: AtomicBool::new(false),
+            freezed: AtomicBool::new(false),
             status: SgxMutex::new(None),
         }
     }
@@ -28,6 +31,12 @@ impl ForcedExitStatus {
         old_status.get_or_insert(status);
     }
 
+    pub fn force_freeze(&self) {
+        let mut old_status = self.status.lock().unwrap();
+        self.freezed.store(true, Ordering::SeqCst);
+        old_status.get_or_insert(TermStatus::Freezed);
+    }
+
     pub fn term_status(&self) -> Option<TermStatus> {
         *self.status.lock().unwrap()
     }
@@ -38,6 +47,7 @@ impl ForcedExitStatus {
 pub enum TermStatus {
     Exited(u8),
     Killed(SigNum),
+    Freezed,
     //Dumped(SigNum),
 }
 
@@ -48,6 +58,7 @@ impl TermStatus {
             TermStatus::Exited(status) => (status as u32) << 8,
             TermStatus::Killed(signum) => (signum.as_u8() as u32),
             //TermStatus::Dumped(signum) => (signum.as_u8() as u32) | 0x80,
+            TermStatus::Freezed => 0, // this shouldn't be exported to user
         }
     }
 }

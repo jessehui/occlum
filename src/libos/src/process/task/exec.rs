@@ -57,6 +57,9 @@ pub fn exec(libos_tid: pid_t, host_tid: pid_t) -> Result<i32> {
         TermStatus::Killed(signum) => {
             info!("Thread killed: tid = {}, signum = {:?}", libos_tid, signum);
         }
+        TermStatus::Freezed => {
+            info!("Thread freezed and then exited: tid = {}", libos_tid);
+        }
     }
 
     // Disable current::get()

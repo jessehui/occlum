@@ -19,7 +19,7 @@ pub fn do_rt_sigreturn(curr_user_ctxt: &mut CpuContext) -> Result<()> {
         });
         if last_ucontext.is_none() {
             let term_status = TermStatus::Killed(SIGKILL);
-            current!().process().force_exit(term_status);
+            current!().process().force_exit(term_status, None);
             return_errno!(
                 EINVAL,
                 "sigreturn should not have been called; kill this process"
@@ -157,7 +157,7 @@ fn handle_signal(
                 SigDefaultAction::Ign => true,
                 SigDefaultAction::Term | SigDefaultAction::Core => {
                     let term_status = TermStatus::Killed(signal.num());
-                    process.force_exit(term_status);
+                    process.force_exit(term_status, None);
                     false
                 }
                 SigDefaultAction::Stop => {

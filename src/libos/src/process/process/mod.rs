@@ -18,6 +18,7 @@ pub struct Process {
     // Mutable info
     parent: Option<RwLock<ProcessRef>>,
     inner: SgxMutex<ProcessInner>,
+    freeze: SgxMutex<bool>, // TODO: Maybe this can be used to implement SIGSTOP/SIGCONT
     // Signal
     sig_dispositions: RwLock<SigDispositions>,
     sig_queues: RwLock<SigQueues>,
@@ -41,6 +42,10 @@ impl Process {
     // TODO: implement process group
     pub fn pgid(&self) -> pid_t {
         self.pid
+    }
+
+    pub fn freeze(&self) -> SgxMutexGuard<bool> {
+        self.freeze.lock().unwrap()
     }
 
     /// Get the parent process.
@@ -123,10 +128,47 @@ impl Process {
     /// There are two reasons to force a process to exit:
     /// 1. Receiving a fatal signal;
     /// 2. Performing exit_group syscall.
+    /// 3. Performing execve syscall to terminate current process
     ///
     /// A process may be forced to exit many times, but only the first time counts.
-    pub fn force_exit(&self, term_status: TermStatus) {
+    pub fn force_exit(
+        &self,
+        term_status: TermStatus,
+        mut freeze_lock: Option<SgxMutexGuard<bool>>,
+    ) {
         self.forced_exit_status.force_exit(term_status);
+        if let Some(mut freeze_lock) = freeze_lock {
+            // There might be some threads freezed at the sysret and wait for new status.
+            // Unfreeze these threads.
+            *freeze_lock = false;
+            drop(freeze_lock);
+        }
+    }
+
+    pub fn force_freeze(&self) -> SgxMutexGuard<bool> {
+        // This lock must be acquired to freeze other threads
+        let mut freeze_status = self.freeze();
+        // Set process status to freeze
+        *freeze_status = true;
+
+        self.forced_exit_status.force_freeze();
+        let threads = self.threads();
+        threads.iter().for_each(|thread| {
+            info!("force thread {:?} to freeze", thread.tid());
+            thread.inner().freeze()
+        });
+        freeze_status
+    }
+
+    /// Set all the thread to running status
+    pub fn force_unfreeze(&self, mut freeze_lock: SgxMutexGuard<bool>) {
+        let threads = self.threads();
+        threads.iter().for_each(|thread| {
+            info!("force thread {:?} to unfreeze and run", thread.tid());
+            thread.inner().start();
+        });
+        *freeze_lock = false;
+        drop(freeze_lock);
     }
 
     /// Get the internal representation of the process.
