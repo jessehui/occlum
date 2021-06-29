@@ -7,54 +7,43 @@ pub fn do_sched_yield() -> Result<isize> {
     Ok(0)
 }
 
-pub fn do_sched_getaffinity(pid: pid_t, buf_size: size_t, buf_ptr: *mut u8) -> Result<isize> {
-    // Construct safe Rust types
-    let buf_size = {
-        if buf_size < CpuSet::len() {
-            return_errno!(EINVAL, "buf size is not big enough");
-        }
+extern "C" {
+    fn occlum_ocall_sched_setaffinity(
+        ret: *mut i32,
+        host_tid: i32,
+        cpusetsize: size_t,
+        mask: *const c_uchar,
+    ) -> sgx_status_t;
+}
 
-        // Linux stores the cpumask in an array of "unsigned long" so the buffer needs to be
-        // multiple of unsigned long. However, Occlum doesn't have this restriction.
-        if (buf_size & (std::mem::size_of::<u64>() - 1) != 0) {
-            warn!("cpuset buf size is not a multiple of unsigned long");
-        }
-        CpuSet::len()
-    };
-    let mut buf_slice = {
-        check_mut_array(buf_ptr, buf_size)?;
-        if buf_ptr as *const _ == std::ptr::null() {
-            return_errno!(EFAULT, "buf ptr must NOT be null");
-        }
-        unsafe { std::slice::from_raw_parts_mut(buf_ptr, buf_size) }
-    };
-    // Call the memory-safe do_sched_getaffinity
-    let affinity = super::do_sched_affinity::do_sched_getaffinity(pid)?;
-    debug_assert!(affinity.as_slice().len() == CpuSet::len());
-    // Copy from Rust types to C types
-    buf_slice.copy_from_slice(affinity.as_slice());
-    Ok(CpuSet::len() as isize)
+extern "C" {
+    fn occlum_ocall_sched_getaffinity(
+        ret: *mut i32,
+        cpusetsize: size_t,
+        mask: *mut c_uchar,
+    ) -> sgx_status_t;
+}
+
+pub fn do_sched_getaffinity(pid: pid_t, buf_size: size_t, buf_ptr: *mut u8) -> Result<isize> {
+    let mut retval = 0;
+    let sgx_status = unsafe { occlum_ocall_sched_getaffinity(&mut retval, buf_size, buf_ptr) };
+    assert!(sgx_status == sgx_status_t::SGX_SUCCESS);
+    Ok(retval as isize)
 }
 
 pub fn do_sched_setaffinity(pid: pid_t, buf_size: size_t, buf_ptr: *const u8) -> Result<isize> {
-    // Convert unsafe C types into safe Rust types
-    let buf_size = {
-        if buf_size < CpuSet::len() {
-            return_errno!(EINVAL, "buf size is not big enough");
-        }
-        CpuSet::len()
+    use crate::process::table;
+    let thread = if pid == 0 {
+        current!()
+    } else {
+        table::get_thread(pid)?
     };
-    let buf_slice = {
-        check_array(buf_ptr, buf_size)?;
-        if buf_ptr as *const _ == std::ptr::null() {
-            return_errno!(EFAULT, "buf ptr must NOT be null");
-        }
-        unsafe { std::slice::from_raw_parts(buf_ptr, buf_size) }
-    };
-    // Call the memory-safe do_sched_setaffinity
-    let affinity = CpuSet::from_slice(buf_slice).unwrap();
-    super::do_sched_affinity::do_sched_setaffinity(pid, affinity)?;
-    Ok(0)
+    let host_tid = thread.sched().lock().unwrap().host_tid().unwrap();
+    let mut retval = 0;
+    let sgx_status =
+        unsafe { occlum_ocall_sched_setaffinity(&mut retval, host_tid as i32, buf_size, buf_ptr) };
+    assert!(sgx_status == sgx_status_t::SGX_SUCCESS);
+    Ok(retval as isize)
 }
 
 pub fn do_getcpu(cpu_ptr: *mut u32, node_ptr: *mut u32) -> Result<isize> {

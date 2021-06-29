@@ -21,7 +21,8 @@ pub struct CpuSet {
 impl CpuSet {
     /// Returns the length of a CPU set in bytes.
     pub fn len() -> usize {
-        align_up(Self::ncores(), 8) / 8
+        // align_up(Self::ncores(), 8) / 8
+        128
     }
 
     /// Returns the number CPU of cores in a CPU set.

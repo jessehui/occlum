@@ -308,7 +308,7 @@ static int test_getcpu_after_setaffinity() {
 // ============================================================================
 
 static test_case_t test_cases[] = {
-    TEST_CASE(test_sched_xetaffinity_with_child_pid),
+    // TEST_CASE(test_sched_xetaffinity_with_child_pid),
     TEST_CASE(test_sched_getaffinity_with_self_pid),
     TEST_CASE(test_sched_setaffinity_with_self_pid),
     TEST_CASE(test_sched_getaffinity_via_explicit_syscall),
@@ -318,7 +318,7 @@ static test_case_t test_cases[] = {
     TEST_CASE(test_sched_getaffinity_with_null_buffer),
     TEST_CASE(test_sched_setaffinity_with_null_buffer),
     TEST_CASE(test_sched_yield),
-    TEST_CASE(test_sched_xetaffinity_children_inheritance),
+    // TEST_CASE(test_sched_xetaffinity_children_inheritance),
     TEST_CASE(test_getcpu),
     TEST_CASE(test_getcpu_after_setaffinity),
 };
