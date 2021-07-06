@@ -22,7 +22,7 @@ git checkout 0.9.9.hotfix
 # Let musl-cross-make build for x86-64 Linux
 TARGET=x86_64-linux-musl
 # We will check out the branch ${MUSL_VER} from ${MUSL_REPO}
-MUSL_REPO=https://github.com/occlum/musl
+MUSL_REPO=https://github.com/jessehui/musl
 MUSL_VER=1.1.24
 # We will use this version of GCC
 GCC_VER=8.3.0
