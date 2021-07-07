@@ -45,6 +45,10 @@ LIBOS_LOG ?= error
 
 LIBOS_SONAME := libocclum-libos.so.$(MAJOR_VER_NUM)
 
+ifeq (`gcc -dumpversion`, "10")
+	EXTRA_C_FLAGS := -fcommon
+endif
+
 ifneq ($(SGX_MODE), HW)
 	LIBOS_CORE_LIB_NAME := occlum-libos-core_sim
 	LIBOS_SO_REAL := $(BUILD_DIR)/lib/libocclum-libos_sim.so.$(VERSION_NUM)
@@ -105,7 +109,7 @@ $(LIBOS_SO_REAL): $(LIBOS_CORE_A) $(LIBCOMPILER_RT_PATCH_A)
 
 $(LIBOS_CORE_A): $(LIBOS_CORE_RS_A) $(C_OBJS) $(CXX_OBJS) $(S_OBJS) $(EDL_C_OBJS)
 	@cp $(LIBOS_CORE_RS_A) $(LIBOS_CORE_A)
-	@ar r $@ $(C_OBJS) $(CXX_OBJS) $(S_OBJS) $(EDL_C_OBJS)
+	@ar r $@ $(C_OBJS) $(CXX_OBJS) $(S_OBJS) $(EDL_C_OBJS) $(EXTRA_C_FLAGS)
 	@echo "GEN => $@"
 
 ifneq (, $(shell which sccache))
