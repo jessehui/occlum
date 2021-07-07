@@ -3,7 +3,7 @@ FROM alpine:3.11 AS alpine
 RUN apk update && \
     apk --no-cache add openjdk11 --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community
 
-FROM registry.cn-hangzhou.aliyuncs.com/alinux/aliyunlinux
+FROM registry.cn-hangzhou.aliyuncs.com/alinux/alinux3
 
 LABEL maintainer="Chunyang Hui <sanqian.hcy@antgroup.com>"
 
