@@ -33,7 +33,7 @@ if [[ ( "$#" < 2 ) ]] ; then
     report_error
 fi
 
-occlum_branch=master
+occlum_branch=update_alinux3
 occlum_label=$1
 os_name=$2
 
@@ -43,7 +43,7 @@ function check_item_in_list() {
     [[ $list =~ (^|[[:space:]])$item($|[[:space:]]) ]]
 }
 
-check_item_in_list "$os_name" "ubuntu18.04 centos8.2" || report_error
+check_item_in_list "$os_name" "ubuntu18.04 centos8.2 aliyunlinux" || report_error
 
 cd "$script_dir/.."
-docker build -f "$script_dir/Dockerfile.$os_name" -t "occlum/occlum:$occlum_label-$os_name" --build-arg OCCLUM_BRANCH=$occlum_branch .
+docker build -f "$script_dir/Dockerfile.$os_name" -t "jessehui/occlum:$occlum_label-$os_name" --build-arg OCCLUM_BRANCH=$occlum_branch .
