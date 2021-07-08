@@ -58,35 +58,24 @@ RUN yum install -y --nogpgcheck \
         uuid-devel \
         vim \
         wget \
-        yum-utils && \
-    yum groupinstall -y 'Development Tools' && \
-    yum clean all
-
-# Upgrade gcc to compile occlum toolchain.
-# This may vary across different platforms depending on the source of gcc.
-# Use aliyunlinux devtoolset to upgrade gcc to 8.
-RUN yum install -y scl-utils rpm-build 
-# && \
-# yum install -y devtoolset-8-gcc-c++ devtoolset-8-gcc devtoolset-8-gdb devtoolset-8-binutils devtoolset-8-make && \
-# printf "unset BASH_ENV PROMPT_COMMAND ENV\nsource scl_source enable devtoolset-8\n" > /usr/bin/scl_enable
-
-# ENV BASH_ENV="/usr/bin/scl_enable"
-# ENV ENV="/usr/bin/scl_enable"
-# ENV PROMPT_COMMAND=". /usr/bin/scl_enable"
-
-# With alinux-release-experimentals, install higher version of git and protobuf (3.5).
-RUN yum install -y \
+        yum-utils \
+        rpm-build \
         git \
         protobuf \
         protobuf-c \
         protobuf-compiler \
         protobuf-c-compiler \
         protobuf-c-devel \
-        protobuf-devel
+        protobuf-devel && \
+    yum groupinstall -y 'Development Tools' && \
+    yum clean all &&
+    alternatives --set python /usr/bin/python3
+
+# Aliyunlinux3 use GCC 10 as default toolchain
 
 # Install PSW and DCAP RPM packages
 WORKDIR /tmp
-RUN wget https://mirrors.openanolis.org/inclavare-containers/alinux2/sgx_rpm_local_repo.tar.gz && \
+RUN wget https://mirrors.openanolis.org/inclavare-containers/alinux3/sgx_rpm_local_repo.tar.gz && \
     tar -xzf sgx_rpm_local_repo.tar.gz && \
     rm -f sgx_rpm_local_repo.tar.gz && \
     cd /tmp/sgx_rpm_local_repo && \
@@ -116,8 +105,7 @@ RUN wget https://mirrors.openanolis.org/inclavare-containers/alinux2/sgx_rpm_loc
 
 # Install SGX SDK
 WORKDIR /tmp
-RUN alternatives --set python /usr/bin/python3 && \
-    git clone -b sgx_2.13.3_for_occlum https://github.com/occlum/linux-sgx && \
+RUN git clone -b sgx_2.13.3_for_occlum https://github.com/occlum/linux-sgx && \
     cd linux-sgx && \
     make preparation && \
     ./compile_and_install.sh no_mitigation USE_OPT_LIBS=2 && \
@@ -140,7 +128,6 @@ ENV PATH="/opt/occlum/build/bin:/usr/local/occlum/bin:$PATH"
 # Install glibc
 COPY toolchains/glibc /tmp/glibc
 WORKDIR /tmp
-# RUN gcc --version
 RUN cd glibc && ./build.sh && rm -rf /tmp/glibc
 
 # Install Occlum Golang toolchain
