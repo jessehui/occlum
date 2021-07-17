@@ -11,15 +11,15 @@ typedef struct {
 void *exec_libos_thread(void *_thread_data) {
     thread_data_t *thread_data = _thread_data;
     sgx_enclave_id_t eid = thread_data->enclave_id;
-    int host_tid = gettid();
+    int host_tid = GETTID();
     int libos_tid = thread_data->libos_tid;
     int libos_exit_status = -1;
     sgx_status_t status = occlum_ecall_exec_thread(eid, &libos_exit_status, libos_tid,
                           host_tid);
     if (status != SGX_SUCCESS) {
         const char *sgx_err = pal_get_sgx_error_msg(status);
-        PAL_ERROR("Failed to enter the enclave to execute a LibOS thread (host tid = %d): %s",
-                  host_tid, sgx_err);
+        PAL_ERROR("Failed to enter the enclave to execute a LibOS thread (host tid = %d) with error code 0x%x: %s",
+                  host_tid, status, sgx_err);
         exit(EXIT_FAILURE);
     }
 

@@ -1,173 +1,221 @@
+use atomic::{Atomic, Ordering};
+
+use super::channel::{Channel, Consumer, Producer};
 use super::*;
-use net::{IoEvent, PollEventFlags};
-use util::ring_buf::*;
+use net::PollEventFlags;
 
 // TODO: Add F_SETPIPE_SZ in fcntl to dynamically change the size of pipe
 // to improve memory efficiency. This value is got from /proc/sys/fs/pipe-max-size on linux.
 pub const PIPE_BUF_SIZE: usize = 1024 * 1024;
 
 pub fn pipe(flags: StatusFlags) -> Result<(PipeReader, PipeWriter)> {
-    let (buffer_reader, buffer_writer) =
-        ring_buffer(PIPE_BUF_SIZE).map_err(|e| errno!(ENFILE, "No memory for new pipes"))?;
+    let (producer, consumer) = Channel::new(PIPE_BUF_SIZE)?.split();
+
     // Only O_NONBLOCK and O_DIRECT can be applied during pipe creation
     let valid_flags = flags & (StatusFlags::O_NONBLOCK | StatusFlags::O_DIRECT);
-
-    if flags.contains(StatusFlags::O_NONBLOCK) {
-        buffer_reader.set_non_blocking();
-        buffer_writer.set_non_blocking();
+    if valid_flags.contains(StatusFlags::O_NONBLOCK) {
+        producer.set_nonblocking(true);
+        consumer.set_nonblocking(true);
     }
 
     Ok((
         PipeReader {
-            inner: SgxMutex::new(buffer_reader),
-            status_flags: RwLock::new(valid_flags),
+            consumer: consumer,
+            status_flags: Atomic::new(valid_flags),
         },
         PipeWriter {
-            inner: SgxMutex::new(buffer_writer),
-            status_flags: RwLock::new(valid_flags),
+            producer: producer,
+            status_flags: Atomic::new(valid_flags),
         },
     ))
 }
 
 pub struct PipeReader {
-    inner: SgxMutex<RingBufReader>,
-    status_flags: RwLock<StatusFlags>,
+    consumer: Consumer<u8>,
+    status_flags: Atomic<StatusFlags>,
 }
 
 impl File for PipeReader {
     fn read(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut ringbuf = self.inner.lock().unwrap();
-        ringbuf.read_from_buffer(buf)
+        self.consumer.pop_slice(buf)
     }
 
     fn readv(&self, bufs: &mut [&mut [u8]]) -> Result<usize> {
-        let mut ringbuf = self.inner.lock().unwrap();
-        ringbuf.read_from_vector(bufs)
+        self.consumer.pop_slices(bufs)
     }
 
-    fn get_access_mode(&self) -> Result<AccessMode> {
+    fn metadata(&self) -> Result<Metadata> {
+        Ok(Metadata {
+            dev: 0,
+            inode: 0,
+            size: 0,
+            blk_size: 0,
+            blocks: 0,
+            atime: Timespec { sec: 0, nsec: 0 },
+            mtime: Timespec { sec: 0, nsec: 0 },
+            ctime: Timespec { sec: 0, nsec: 0 },
+            type_: FileType::NamedPipe,
+            mode: 0o600,
+            nlinks: 1,
+            uid: 0,
+            gid: 0,
+            rdev: 0,
+        })
+    }
+
+    fn access_mode(&self) -> Result<AccessMode> {
         Ok(AccessMode::O_RDONLY)
     }
 
-    fn get_status_flags(&self) -> Result<StatusFlags> {
-        let status_flags = self.status_flags.read().unwrap();
+    fn status_flags(&self) -> Result<StatusFlags> {
+        let status_flags = self.status_flags.load(Ordering::Acquire);
         Ok(status_flags.clone())
     }
 
-    fn set_status_flags(&self, new_status_flags: StatusFlags) -> Result<()> {
-        let mut status_flags = self.status_flags.write().unwrap();
+    fn set_status_flags(&self, mut new_status_flags: StatusFlags) -> Result<()> {
         // Only O_NONBLOCK, O_ASYNC and O_DIRECT can be set
-        *status_flags = new_status_flags
-            & (StatusFlags::O_NONBLOCK | StatusFlags::O_ASYNC | StatusFlags::O_DIRECT);
+        new_status_flags &=
+            (StatusFlags::O_NONBLOCK | StatusFlags::O_ASYNC | StatusFlags::O_DIRECT);
 
-        if new_status_flags.contains(StatusFlags::O_NONBLOCK) {
-            self.inner.lock().unwrap().set_non_blocking();
-        } else {
-            self.inner.lock().unwrap().set_blocking();
+        let is_nonblocking = new_status_flags.contains(StatusFlags::O_NONBLOCK);
+        self.consumer.set_nonblocking(is_nonblocking);
+
+        let unsupported_flags = StatusFlags::O_ASYNC | StatusFlags::O_DIRECT;
+        if new_status_flags.intersects(unsupported_flags) {
+            warn!("unsupported flags of pipe: {:?}", unsupported_flags);
         }
+
+        self.status_flags.store(new_status_flags, Ordering::Release);
         Ok(())
     }
 
     fn poll(&self) -> Result<PollEventFlags> {
-        let ringbuf_reader = self.inner.lock().unwrap();
-        let mut events = PollEventFlags::empty();
-        if ringbuf_reader.can_read() {
-            events |= PollEventFlags::POLLIN | PollEventFlags::POLLRDNORM;
-        }
-
-        if ringbuf_reader.is_peer_closed() {
-            events |= PollEventFlags::POLLHUP;
-        }
-
+        warn!("poll is not supported for pipe");
+        let events = PollEventFlags::empty();
         Ok(events)
     }
 
-    fn enqueue_event(&self, event: IoEvent) -> Result<()> {
-        let ringbuf_reader = self.inner.lock().unwrap();
-        ringbuf_reader.enqueue_event(event)
+    fn poll_new(&self) -> IoEvents {
+        self.consumer.poll()
     }
 
-    fn dequeue_event(&self) -> Result<()> {
-        let ringbuf_reader = self.inner.lock().unwrap();
-        ringbuf_reader.dequeue_event()
+    fn notifier(&self) -> Option<&IoNotifier> {
+        Some(self.consumer.notifier())
     }
 
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    fn ioctl(&self, cmd: &mut IoctlCmd) -> Result<i32> {
+        match cmd {
+            IoctlCmd::TCGETS(_) => return_errno!(ENOTTY, "not tty device"),
+            IoctlCmd::TCSETS(_) => return_errno!(ENOTTY, "not tty device"),
+            IoctlCmd::FIONREAD(arg) => {
+                let ready_len = self.get_ready_len().min(std::i32::MAX as usize) as i32;
+                **arg = ready_len;
+                return Ok(0);
+            }
+            _ => return_errno!(ENOSYS, "not supported"),
+        };
+        unreachable!();
+    }
 }
 
-unsafe impl Send for PipeReader {}
-unsafe impl Sync for PipeReader {}
+impl PipeReader {
+    fn get_ready_len(&self) -> usize {
+        self.consumer.ready_len()
+    }
+}
 
 pub struct PipeWriter {
-    inner: SgxMutex<RingBufWriter>,
-    status_flags: RwLock<StatusFlags>,
+    producer: Producer<u8>,
+    status_flags: Atomic<StatusFlags>,
 }
 
 impl File for PipeWriter {
     fn write(&self, buf: &[u8]) -> Result<usize> {
-        let mut ringbuf = self.inner.lock().unwrap();
-        ringbuf.write_to_buffer(buf)
+        self.producer.push_slice(buf)
     }
 
     fn writev(&self, bufs: &[&[u8]]) -> Result<usize> {
-        let mut ringbuf = self.inner.lock().unwrap();
-        ringbuf.write_to_vector(bufs)
+        self.producer.push_slices(bufs)
     }
 
     fn seek(&self, pos: SeekFrom) -> Result<off_t> {
         return_errno!(ESPIPE, "Pipe does not support seek")
     }
 
-    fn get_access_mode(&self) -> Result<AccessMode> {
+    fn metadata(&self) -> Result<Metadata> {
+        Ok(Metadata {
+            dev: 0,
+            inode: 0,
+            size: 0,
+            blk_size: 0,
+            blocks: 0,
+            atime: Timespec { sec: 0, nsec: 0 },
+            mtime: Timespec { sec: 0, nsec: 0 },
+            ctime: Timespec { sec: 0, nsec: 0 },
+            type_: FileType::NamedPipe,
+            mode: 0o600,
+            nlinks: 1,
+            uid: 0,
+            gid: 0,
+            rdev: 0,
+        })
+    }
+
+    fn access_mode(&self) -> Result<AccessMode> {
         Ok(AccessMode::O_WRONLY)
     }
 
-    fn get_status_flags(&self) -> Result<StatusFlags> {
-        let status_flags = self.status_flags.read().unwrap();
+    fn status_flags(&self) -> Result<StatusFlags> {
+        let status_flags = self.status_flags.load(Ordering::Acquire);
         Ok(status_flags.clone())
     }
 
-    fn set_status_flags(&self, new_status_flags: StatusFlags) -> Result<()> {
-        let mut status_flags = self.status_flags.write().unwrap();
+    fn set_status_flags(&self, mut new_status_flags: StatusFlags) -> Result<()> {
         // Only O_NONBLOCK, O_ASYNC and O_DIRECT can be set
-        *status_flags = new_status_flags
-            & (StatusFlags::O_NONBLOCK | StatusFlags::O_ASYNC | StatusFlags::O_DIRECT);
+        new_status_flags &=
+            (StatusFlags::O_NONBLOCK | StatusFlags::O_ASYNC | StatusFlags::O_DIRECT);
 
-        if new_status_flags.contains(StatusFlags::O_NONBLOCK) {
-            self.inner.lock().unwrap().set_non_blocking();
-        } else {
-            self.inner.lock().unwrap().set_blocking();
+        let is_nonblocking = new_status_flags.contains(StatusFlags::O_NONBLOCK);
+        self.producer.set_nonblocking(is_nonblocking);
+
+        let unsupported_flags = StatusFlags::O_ASYNC | StatusFlags::O_DIRECT;
+        if new_status_flags.intersects(unsupported_flags) {
+            warn!("unsupported flags of pipe: {:?}", unsupported_flags);
         }
+
+        self.status_flags.store(new_status_flags, Ordering::Release);
         Ok(())
     }
 
     fn poll(&self) -> Result<PollEventFlags> {
-        let ringbuf_writer = self.inner.lock().unwrap();
-        let mut events = PollEventFlags::empty();
-        if ringbuf_writer.can_write() {
-            events |= PollEventFlags::POLLOUT | PollEventFlags::POLLWRNORM;
-        }
-        if ringbuf_writer.is_peer_closed() {
-            events |= PollEventFlags::POLLERR;
-        }
-
+        warn!("poll is not supported for pipe");
+        let events = PollEventFlags::empty();
         Ok(events)
     }
 
-    fn enqueue_event(&self, event: IoEvent) -> Result<()> {
-        let ringbuf_writer = self.inner.lock().unwrap();
-        ringbuf_writer.enqueue_event(event)
+    fn poll_new(&self) -> IoEvents {
+        self.producer.poll()
     }
 
-    fn dequeue_event(&self) -> Result<()> {
-        let ringbuf_writer = self.inner.lock().unwrap();
-        ringbuf_writer.dequeue_event()
+    fn notifier(&self) -> Option<&IoNotifier> {
+        Some(self.producer.notifier())
     }
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    fn ioctl(&self, cmd: &mut IoctlCmd) -> Result<i32> {
+        match cmd {
+            IoctlCmd::TCGETS(_) => return_errno!(ENOTTY, "not tty device"),
+            IoctlCmd::TCSETS(_) => return_errno!(ENOTTY, "not tty device"),
+            _ => return_errno!(ENOSYS, "not supported"),
+        };
+        unreachable!();
     }
 }
 
@@ -199,8 +247,8 @@ pub fn do_pipe2(flags: u32) -> Result<[FileDesc; 2]> {
     let close_on_spawn = creation_flags.must_close_on_spawn();
 
     let current = current!();
-    let reader_fd = current.add_file(Arc::new(Box::new(pipe_reader)), close_on_spawn);
-    let writer_fd = current.add_file(Arc::new(Box::new(pipe_writer)), close_on_spawn);
+    let reader_fd = current.add_file(Arc::new(pipe_reader), close_on_spawn);
+    let writer_fd = current.add_file(Arc::new(pipe_writer), close_on_spawn);
     trace!("pipe2: reader_fd: {}, writer_fd: {}", reader_fd, writer_fd);
     Ok([reader_fd, writer_fd])
 }

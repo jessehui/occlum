@@ -1,17 +1,22 @@
-use super::dev_fs::{DevNull, DevRandom, DevSgx, DevZero};
 /// Present a per-process view of FS.
 use super::*;
 
 #[derive(Debug, Clone)]
 pub struct FsView {
+    root: String,
     cwd: String,
 }
 
 impl FsView {
     pub fn new() -> FsView {
-        Self {
-            cwd: "/".to_owned(),
-        }
+        let root = String::from("/");
+        let cwd = root.clone();
+        Self { root, cwd }
+    }
+
+    /// Get the root directory
+    pub fn root(&self) -> &str {
+        &self.root
     }
 
     /// Get the current working directory.
@@ -39,19 +44,7 @@ impl FsView {
     }
 
     /// Open a file on the process. But DO NOT add it to file table.
-    pub fn open_file(&self, path: &str, flags: u32, mode: u32) -> Result<Box<dyn File>> {
-        if path == "/dev/null" {
-            return Ok(Box::new(DevNull));
-        }
-        if path == "/dev/zero" {
-            return Ok(Box::new(DevZero));
-        }
-        if path == "/dev/random" || path == "/dev/urandom" || path == "/dev/arandom" {
-            return Ok(Box::new(DevRandom));
-        }
-        if path == "/dev/sgx" {
-            return Ok(Box::new(DevSgx));
-        }
+    pub fn open_file(&self, path: &str, flags: u32, mode: u32) -> Result<Arc<dyn File>> {
         let creation_flags = CreationFlags::from_bits_truncate(flags);
         let inode = if creation_flags.no_follow_symlink() {
             match self.lookup_inode_no_follow(path) {
@@ -113,7 +106,7 @@ impl FsView {
             }
         };
         let abs_path = self.convert_to_abs_path(&path);
-        Ok(Box::new(INodeFile::open(inode, &abs_path, flags)?))
+        Ok(Arc::new(INodeFile::open(inode, &abs_path, flags)?))
     }
 
     /// Recursively lookup the real path of giving path, dereference symlinks
@@ -156,7 +149,11 @@ impl FsView {
 
     /// Lookup INode from the cwd of the process. If path is a symlink, do not dereference it
     pub fn lookup_inode_no_follow(&self, path: &str) -> Result<Arc<dyn INode>> {
-        debug!("lookup_inode: cwd: {:?}, path: {:?}", self.cwd(), path);
+        debug!(
+            "lookup_inode_no_follow: cwd: {:?}, path: {:?}",
+            self.cwd(),
+            path
+        );
         let (dir_path, file_name) = split_path(&path);
         let dir_inode = self.lookup_inode(dir_path)?;
         Ok(dir_inode.lookup(file_name)?)
@@ -167,20 +164,21 @@ impl FsView {
         // Linux uses 40 as the upper limit for resolving symbolic links,
         // so Occlum use it as a reasonable value
         const MAX_SYMLINKS: usize = 40;
-        debug!(
-            "lookup_inode_follow: cwd: {:?}, path: {:?}",
-            self.cwd(),
-            path
-        );
+        debug!("lookup_inode: cwd: {:?}, path: {:?}", self.cwd(), path);
         if path.len() > 0 && path.as_bytes()[0] == b'/' {
             // absolute path
             let abs_path = path.trim_start_matches('/');
-            let inode = ROOT_INODE.lookup_follow(abs_path, MAX_SYMLINKS)?;
+            let inode = ROOT_INODE
+                .read()
+                .unwrap()
+                .lookup_follow(abs_path, MAX_SYMLINKS)?;
             Ok(inode)
         } else {
             // relative path
             let cwd = self.cwd().trim_start_matches('/');
             let inode = ROOT_INODE
+                .read()
+                .unwrap()
                 .lookup_follow(cwd, MAX_SYMLINKS)?
                 .lookup_follow(path, MAX_SYMLINKS)?;
             Ok(inode)
@@ -211,8 +209,8 @@ impl FsView {
 
 impl Default for FsView {
     fn default() -> Self {
-        Self {
-            cwd: "/".to_owned(),
-        }
+        let root = String::from("/");
+        let cwd = root.clone();
+        Self { root, cwd }
     }
 }

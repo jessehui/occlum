@@ -106,7 +106,7 @@ int pal_init_enclave(const char *instance_dir) {
                              NULL);
     if (ret != SGX_SUCCESS) {
         const char *sgx_err_msg = pal_get_sgx_error_msg(ret);
-        PAL_ERROR("Failed to create enclave: %s", sgx_err_msg);
+        PAL_ERROR("Failed to create enclave with error code 0x%x: %s", ret, sgx_err_msg);
         if (fp != NULL) { fclose(fp); }
         return -1;
     }
@@ -130,14 +130,8 @@ int pal_init_enclave(const char *instance_dir) {
 }
 
 int pal_destroy_enclave(void) {
-// FIXME: Due to lack of support for enclave interrupt in simulation mode, some programs
-// come across the problem that it can't exit when running in simulation mode. We have to
-// fallback to the old way to exit brutely in simulation mode.
-#ifndef SGX_MODE_SIM
     sgx_destroy_enclave(global_eid);
     global_eid = SGX_INVALID_ENCLAVE_ID;
-#endif
-
     return 0;
 }
 

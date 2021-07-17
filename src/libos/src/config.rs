@@ -9,34 +9,10 @@ use std::sgxfs::SgxFile;
 
 lazy_static! {
     pub static ref LIBOS_CONFIG: Config = {
-        fn load_config(config_path: &str) -> Result<Config> {
-            let mut config_file = {
-                let config_file =
-                    SgxFile::open_integrity_only(config_path).map_err(|e| errno!(e))?;
-
-                let actual_mac = config_file.get_mac().map_err(|e| errno!(e))?;
-                let expected_mac = conf_get_hardcoded_file_mac();
-                if actual_mac != expected_mac {
-                    return_errno!(EINVAL, "unexpected file MAC");
-                }
-
-                config_file
-            };
-            let config_json = {
-                let mut config_json = String::new();
-                config_file
-                    .read_to_string(&mut config_json)
-                    .map_err(|e| errno!(e))?;
-                config_json
-            };
-            let config_input: InputConfig =
-                serde_json::from_str(&config_json).map_err(|e| errno!(e))?;
-            let config = Config::from_input(&config_input)
-                .cause_err(|e| errno!(EINVAL, "invalid config JSON"))?;
-            Ok(config)
-        }
-        let config_path = unsafe { format!("{}{}", INSTANCE_DIR, "/build/Occlum.json.protected") };
-        match load_config(&config_path) {
+        let config_path =
+            unsafe { format!("{}{}", INSTANCE_DIR, "/build/.Occlum_sys.json.protected") };
+        let expected_mac = conf_get_hardcoded_file_mac();
+        match load_config(&config_path, &expected_mac) {
             Err(e) => {
                 error!("failed to load config: {}", e.backtrace());
                 panic!();
@@ -46,24 +22,38 @@ lazy_static! {
     };
 }
 
+pub fn load_config(config_path: &str, expected_mac: &sgx_aes_gcm_128bit_tag_t) -> Result<Config> {
+    let mut config_file = {
+        let config_file = SgxFile::open_integrity_only(config_path).map_err(|e| errno!(e))?;
+        let actual_mac = config_file.get_mac().map_err(|e| errno!(e))?;
+        if actual_mac != *expected_mac {
+            return_errno!(EINVAL, "unexpected file MAC");
+        }
+        config_file
+    };
+    let config_json = {
+        let mut config_json = String::new();
+        config_file
+            .read_to_string(&mut config_json)
+            .map_err(|e| errno!(e))?;
+        config_json
+    };
+    let config_input: InputConfig = serde_json::from_str(&config_json).map_err(|e| errno!(e))?;
+    let config =
+        Config::from_input(&config_input).cause_err(|e| errno!(EINVAL, "invalid config JSON"))?;
+    Ok(config)
+}
+
 // This value will be modified during occlum build
-#[no_mangle]
+#[used]
 #[link_section = ".builtin_config"]
-static OCCLUM_JSON_MAC: [i8; 48] = [0; 48];
+static OCCLUM_JSON_MAC: [u8; 47] = [0; 47];
 
 fn conf_get_hardcoded_file_mac() -> sgx_aes_gcm_128bit_tag_t {
-    assert!(
-        *OCCLUM_JSON_MAC.last().unwrap() == 0,
-        "must be a null-terminated C string"
-    );
-
-    let mac_str = unsafe {
-        CStr::from_ptr(&OCCLUM_JSON_MAC as *const i8)
-            .to_str()
-            .expect("MAC contains non UTF-8 characters")
-    };
-
-    let mac = parse_mac(mac_str).expect("MAC string cannot be converted to numbers");
+    // Use black_box to avoid the compiler's optimization for OCCLUM_JSON_MAC
+    let json_mac = std::hint::black_box(&OCCLUM_JSON_MAC);
+    let mac_str = String::from_utf8(json_mac.to_vec()).expect("MAC contains non UTF-8 characters");
+    let mac = parse_mac(&mac_str).expect("MAC string cannot be converted to numbers");
     mac
 }
 
@@ -125,11 +115,12 @@ pub enum ConfigMountFsType {
     TYPE_HOSTFS,
     TYPE_RAMFS,
     TYPE_UNIONFS,
+    TYPE_DEVFS,
+    TYPE_PROCFS,
 }
 
 #[derive(Debug)]
 pub struct ConfigMountOptions {
-    pub integrity_only: bool,
     pub mac: Option<sgx_aes_gcm_128bit_tag_t>,
     pub layers: Option<Vec<ConfigMount>>,
     pub temporary: bool,
@@ -199,13 +190,15 @@ impl ConfigEnv {
 
 impl ConfigMount {
     fn from_input(input: &InputConfigMount) -> Result<ConfigMount> {
-        const ALL_FS_TYPES: [&str; 4] = ["sefs", "hostfs", "ramfs", "unionfs"];
+        const ALL_FS_TYPES: [&str; 6] = ["sefs", "hostfs", "ramfs", "unionfs", "devfs", "procfs"];
 
         let type_ = match input.type_.as_str() {
             "sefs" => ConfigMountFsType::TYPE_SEFS,
             "hostfs" => ConfigMountFsType::TYPE_HOSTFS,
             "ramfs" => ConfigMountFsType::TYPE_RAMFS,
             "unionfs" => ConfigMountFsType::TYPE_UNIONFS,
+            "devfs" => ConfigMountFsType::TYPE_DEVFS,
+            "procfs" => ConfigMountFsType::TYPE_PROCFS,
             _ => {
                 return_errno!(EINVAL, "Unsupported file system type");
             }
@@ -236,13 +229,10 @@ impl ConfigMount {
 
 impl ConfigMountOptions {
     fn from_input(input: &InputConfigMountOptions) -> Result<ConfigMountOptions> {
-        let (integrity_only, mac) = if !input.integrity_only {
-            (false, None)
+        let mac = if input.mac.is_some() {
+            Some(parse_mac(&input.mac.as_ref().unwrap())?)
         } else {
-            if input.mac.is_none() {
-                return_errno!(EINVAL, "MAC is expected");
-            }
-            (true, Some(parse_mac(&input.mac.as_ref().unwrap())?))
+            None
         };
         let layers = if let Some(layers) = &input.layers {
             let layers = layers
@@ -254,7 +244,6 @@ impl ConfigMountOptions {
             None
         };
         Ok(ConfigMountOptions {
-            integrity_only,
             mac,
             layers,
             temporary: input.temporary,
@@ -387,8 +376,6 @@ struct InputConfigMount {
 #[derive(Deserialize, Debug, Default)]
 #[serde(deny_unknown_fields)]
 struct InputConfigMountOptions {
-    #[serde(default)]
-    pub integrity_only: bool,
     #[serde(rename = "MAC")]
     #[serde(default)]
     pub mac: Option<String>,

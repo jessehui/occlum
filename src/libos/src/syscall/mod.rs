@@ -16,39 +16,41 @@ use std::ffi::{CStr, CString};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::mem::MaybeUninit;
 use std::ptr;
-use time::{clockid_t, timespec_t, timeval_t};
+use time::{clockid_t, itimerspec_t, timespec_t, timeval_t};
 use util::log::{self, LevelFilter};
 use util::mem_util::from_user::*;
 
 use crate::exception::do_handle_exception;
 use crate::fs::{
     do_access, do_chdir, do_chmod, do_chown, do_close, do_dup, do_dup2, do_dup3, do_eventfd,
-    do_eventfd2, do_faccessat, do_fchmod, do_fchmodat, do_fchown, do_fchownat, do_fcntl,
-    do_fdatasync, do_fstat, do_fstatat, do_fsync, do_ftruncate, do_getcwd, do_getdents64, do_ioctl,
-    do_lchown, do_link, do_linkat, do_lseek, do_lstat, do_mkdir, do_mkdirat, do_open, do_openat,
-    do_pipe, do_pipe2, do_pread, do_pwrite, do_read, do_readlink, do_readlinkat, do_readv,
-    do_rename, do_renameat, do_rmdir, do_sendfile, do_stat, do_symlink, do_symlinkat, do_sync,
-    do_truncate, do_unlink, do_unlinkat, do_write, do_writev, iovec_t, File, FileDesc, FileRef,
-    HostStdioFds, Stat,
+    do_eventfd2, do_faccessat, do_fallocate, do_fchmod, do_fchmodat, do_fchown, do_fchownat,
+    do_fcntl, do_fdatasync, do_fstat, do_fstatat, do_fstatfs, do_fsync, do_ftruncate, do_getcwd,
+    do_getdents, do_getdents64, do_ioctl, do_lchown, do_link, do_linkat, do_lseek, do_lstat,
+    do_mkdir, do_mkdirat, do_mount_rootfs, do_open, do_openat, do_pipe, do_pipe2, do_pread,
+    do_pwrite, do_read, do_readlink, do_readlinkat, do_readv, do_rename, do_renameat, do_rmdir,
+    do_sendfile, do_stat, do_statfs, do_symlink, do_symlinkat, do_sync, do_timerfd_create,
+    do_timerfd_gettime, do_timerfd_settime, do_truncate, do_unlink, do_unlinkat, do_write,
+    do_writev, iovec_t, AsTimer, File, FileDesc, FileRef, HostStdioFds, Stat, Statfs,
 };
 use crate::interrupt::{do_handle_interrupt, sgx_interrupt_info_t};
 use crate::misc::{resource_t, rlimit_t, sysinfo_t, utsname_t};
 use crate::net::{
     do_accept, do_accept4, do_bind, do_connect, do_epoll_create, do_epoll_create1, do_epoll_ctl,
     do_epoll_pwait, do_epoll_wait, do_getpeername, do_getsockname, do_getsockopt, do_listen,
-    do_poll, do_recvfrom, do_recvmsg, do_select, do_sendmsg, do_sendto, do_setsockopt, do_shutdown,
-    do_socket, do_socketpair, msghdr, msghdr_mut, AsSocket, AsUnixSocket, EpollEvent, PollEvent,
-    SocketFile, UnixSocketFile,
+    do_poll, do_recvfrom, do_recvmsg, do_select, do_sendmmsg, do_sendmsg, do_sendto, do_setsockopt,
+    do_shutdown, do_socket, do_socketpair, mmsghdr, msghdr, msghdr_mut,
 };
 use crate::process::{
-    do_arch_prctl, do_clone, do_exit, do_exit_group, do_futex, do_getegid, do_geteuid, do_getgid,
-    do_getpgid, do_getpid, do_getppid, do_gettid, do_getuid, do_prctl, do_set_tid_address,
-    do_spawn, do_wait4, pid_t, FdOp, ThreadStatus,
+    do_arch_prctl, do_clone, do_execve, do_exit, do_exit_group, do_futex, do_getegid, do_geteuid,
+    do_getgid, do_getgroups, do_getpgid, do_getpid, do_getppid, do_gettid, do_getuid, do_prctl,
+    do_set_tid_address, do_spawn_for_glibc, do_spawn_for_musl, do_wait4, pid_t, posix_spawnattr_t,
+    FdOp, SpawnFileActions, ThreadStatus,
 };
 use crate::sched::{do_getcpu, do_sched_getaffinity, do_sched_setaffinity, do_sched_yield};
 use crate::signal::{
-    do_kill, do_rt_sigaction, do_rt_sigpending, do_rt_sigprocmask, do_rt_sigreturn, do_sigaltstack,
-    do_tgkill, do_tkill, sigaction_t, sigset_t, stack_t,
+    do_kill, do_rt_sigaction, do_rt_sigpending, do_rt_sigprocmask, do_rt_sigreturn,
+    do_rt_sigtimedwait, do_sigaltstack, do_tgkill, do_tkill, sigaction_t, siginfo_t, sigset_t,
+    stack_t,
 };
 use crate::vm::{MMapFlags, MRemapFlags, MSyncFlags, VMPerms};
 use crate::{fs, process, std, vm};
@@ -91,7 +93,7 @@ macro_rules! process_syscall_table_with_callback {
             (Stat = 4) => do_stat(path: *const i8, stat_buf: *mut Stat),
             (Fstat = 5) => do_fstat(fd: FileDesc, stat_buf: *mut Stat),
             (Lstat = 6) => do_lstat(path: *const i8, stat_buf: *mut Stat),
-            (Poll = 7) => do_poll(fds: *mut PollEvent, nfds: libc::nfds_t, timeout: c_int),
+            (Poll = 7) => do_poll(fds: *mut libc::pollfd, nfds: libc::nfds_t, timeout: c_int),
             (Lseek = 8) => do_lseek(fd: FileDesc, offset: off_t, whence: i32),
             (Mmap = 9) => do_mmap(addr: usize, size: usize, perms: i32, flags: i32, fd: FileDesc, offset: off_t),
             (Mprotect = 10) => do_mprotect(addr: usize, len: usize, prot: u32),
@@ -143,9 +145,9 @@ macro_rules! process_syscall_table_with_callback {
             (Clone = 56) => do_clone(flags: u32, stack_addr: usize, ptid: *mut pid_t, ctid: *mut pid_t, new_tls: usize),
             (Fork = 57) => handle_unsupported(),
             (Vfork = 58) => handle_unsupported(),
-            (Execve = 59) => handle_unsupported(),
+            (Execve = 59) => do_execve(path: *const i8, argv: *const *const i8, envp: *const *const i8),
             (Exit = 60) => do_exit(exit_status: i32),
-            (Wait4 = 61) => do_wait4(pid: i32, _exit_status: *mut i32),
+            (Wait4 = 61) => do_wait4(pid: i32, _exit_status: *mut i32, options: u32),
             (Kill = 62) => do_kill(pid: i32, sig: c_int),
             (Uname = 63) => do_uname(name: *mut utsname_t),
             (Semget = 64) => handle_unsupported(),
@@ -162,7 +164,7 @@ macro_rules! process_syscall_table_with_callback {
             (Fdatasync = 75) => do_fdatasync(fd: FileDesc),
             (Truncate = 76) => do_truncate(path: *const i8, len: usize),
             (Ftruncate = 77) => do_ftruncate(fd: FileDesc, len: usize),
-            (Getdents = 78) => handle_unsupported(),
+            (Getdents = 78) => do_getdents(fd: FileDesc, buf: *mut u8, buf_size: usize),
             (Getcwd = 79) => do_getcwd(buf: *mut u8, size: usize),
             (Chdir = 80) => do_chdir(path: *const i8),
             (Fchdir = 81) => handle_unsupported(),
@@ -199,7 +201,7 @@ macro_rules! process_syscall_table_with_callback {
             (Setsid = 112) => handle_unsupported(),
             (Setreuid = 113) => handle_unsupported(),
             (Setregid = 114) => handle_unsupported(),
-            (Getgroups = 115) => handle_unsupported(),
+            (Getgroups = 115) => do_getgroups(size: isize, buf_ptr: *mut u32),
             (Setgroups = 116) => handle_unsupported(),
             (Setresuid = 117) => handle_unsupported(),
             (Getresuid = 118) => handle_unsupported(),
@@ -212,7 +214,7 @@ macro_rules! process_syscall_table_with_callback {
             (Capget = 125) => handle_unsupported(),
             (Capset = 126) => handle_unsupported(),
             (RtSigpending = 127) => do_rt_sigpending(buf_ptr: *mut sigset_t, buf_size: usize),
-            (RtSigtimedwait = 128) => handle_unsupported(),
+            (RtSigtimedwait = 128) => do_rt_sigtimedwait(mask_ptr: *const sigset_t, info_ptr: *mut siginfo_t, timeout_ptr: *const timespec_t, mask_size: usize),
             (RtSigqueueinfo = 129) => handle_unsupported(),
             (RtSigsuspend = 130) => handle_unsupported(),
             (Sigaltstack = 131) => do_sigaltstack(ss: *const stack_t, old_ss: *mut stack_t, context: *const CpuContext),
@@ -221,8 +223,8 @@ macro_rules! process_syscall_table_with_callback {
             (Uselib = 134) => handle_unsupported(),
             (Personality = 135) => handle_unsupported(),
             (Ustat = 136) => handle_unsupported(),
-            (Statfs = 137) => handle_unsupported(),
-            (Fstatfs = 138) => handle_unsupported(),
+            (Statfs = 137) => do_statfs(path: *const i8, statfs_buf: *mut Statfs),
+            (Fstatfs = 138) => do_fstatfs(fd: FileDesc, statfs_buf: *mut Statfs),
             (SysFs = 139) => handle_unsupported(),
             (Getpriority = 140) => handle_unsupported(),
             (Setpriority = 141) => handle_unsupported(),
@@ -285,8 +287,8 @@ macro_rules! process_syscall_table_with_callback {
             (Lremovexattr = 198) => handle_unsupported(),
             (Fremovexattr = 199) => handle_unsupported(),
             (Tkill = 200) => do_tkill(tid: pid_t, sig: c_int),
-            (Time = 201) => handle_unsupported(),
-            (Futex = 202) => do_futex(futex_addr: *const i32, futex_op: u32, futex_val: i32, timeout: u64, futex_new_addr: *const i32),
+            (Time = 201) => do_time(tloc_u: *mut time_t),
+            (Futex = 202) => do_futex(futex_addr: *const i32, futex_op: u32, futex_val: i32, timeout: u64, futex_new_addr: *const i32, bitset: u32),
             (SchedSetaffinity = 203) => do_sched_setaffinity(pid: pid_t, cpusize: size_t, buf: *const c_uchar),
             (SchedGetaffinity = 204) => do_sched_getaffinity(pid: pid_t, cpusize: size_t, buf: *mut c_uchar),
             (SetThreadArea = 205) => handle_unsupported(),
@@ -352,7 +354,7 @@ macro_rules! process_syscall_table_with_callback {
             (Linkat = 265) => do_linkat(olddirfd: i32, oldpath: *const i8, newdirfd: i32, newpath: *const i8, flags: i32),
             (Symlinkat = 266) => do_symlinkat(target: *const i8, new_dirfd: i32, link_path: *const i8),
             (Readlinkat = 267) => do_readlinkat(dirfd: i32, path: *const i8, buf: *mut u8, size: usize),
-            (Fchmodat = 268) => do_fchmodat(dirfd: i32, path: *const i8, mode: u16, flags: i32),
+            (Fchmodat = 268) => do_fchmodat(dirfd: i32, path: *const i8, mode: u16),
             (Faccessat = 269) => do_faccessat(dirfd: i32, path: *const i8, mode: u32, flags: u32),
             (Pselect6 = 270) => handle_unsupported(),
             (Ppoll = 271) => handle_unsupported(),
@@ -367,11 +369,11 @@ macro_rules! process_syscall_table_with_callback {
             (Utimensat = 280) => handle_unsupported(),
             (EpollPwait = 281) => do_epoll_pwait(epfd: c_int, events: *mut libc::epoll_event, maxevents: c_int, timeout: c_int, sigmask: *const usize),
             (Signalfd = 282) => handle_unsupported(),
-            (TimerfdCreate = 283) => handle_unsupported(),
+            (TimerfdCreate = 283) => do_timerfd_create(clockid: clockid_t, flags: i32 ),
             (Eventfd = 284) => do_eventfd(init_val: u32),
-            (Fallocate = 285) => handle_unsupported(),
-            (TimerfdSettime = 286) => handle_unsupported(),
-            (TimerfdGettime = 287) => handle_unsupported(),
+            (Fallocate = 285) => do_fallocate(fd: FileDesc, mode: u32, offset: off_t, len: off_t),
+            (TimerfdSettime = 286) => do_timerfd_settime(fd: FileDesc, flags: i32, new_value: *const itimerspec_t, old_value: *mut itimerspec_t),
+            (TimerfdGettime = 287) => do_timerfd_gettime(fd: FileDesc, curr_value: *mut itimerspec_t),
             (Accept4 = 288) => do_accept4(fd: c_int, addr: *mut libc::sockaddr, addr_len: *mut libc::socklen_t, flags: c_int),
             (Signalfd4 = 289) => handle_unsupported(),
             (Eventfd2 = 290) => do_eventfd2(init_val: u32, flags: i32),
@@ -391,7 +393,7 @@ macro_rules! process_syscall_table_with_callback {
             (OpenByHandleAt = 304) => handle_unsupported(),
             (ClockAdjtime = 305) => handle_unsupported(),
             (Syncfs = 306) => handle_unsupported(),
-            (Sendmmsg = 307) => handle_unsupported(),
+            (Sendmmsg = 307) => do_sendmmsg(fd: c_int, msg_ptr: *mut mmsghdr, vlen: c_uint, flags_c: c_int),
             (Setns = 308) => handle_unsupported(),
             (Getcpu = 309) => do_getcpu(cpu_ptr: *mut u32, node_ptr: *mut u32),
             (ProcessVmReadv = 310) => handle_unsupported(),
@@ -412,9 +414,11 @@ macro_rules! process_syscall_table_with_callback {
             (Mlock2 = 325) => handle_unsupported(),
 
             // Occlum-specific system calls
-            (Spawn = 360) => do_spawn(child_pid_ptr: *mut u32, path: *const i8, argv: *const *const i8, envp: *const *const i8, fdop_list: *const FdOp),
+            (SpawnGlibc = 359) => do_spawn_for_glibc(child_pid_ptr: *mut u32, path: *const i8, argv: *const *const i8, envp: *const *const i8, fa: *const SpawnFileActions, attribute_list: *const posix_spawnattr_t),
+            (SpawnMusl = 360) => do_spawn_for_musl(child_pid_ptr: *mut u32, path: *const i8, argv: *const *const i8, envp: *const *const i8, fdop_list: *const FdOp, attribute_list: *const posix_spawnattr_t),
             (HandleException = 361) => do_handle_exception(info: *mut sgx_exception_info_t, fpregs: *mut FpRegs, context: *mut CpuContext),
             (HandleInterrupt = 362) => do_handle_interrupt(info: *mut sgx_interrupt_info_t, fpregs: *mut FpRegs, context: *mut CpuContext),
+            (MountRootFS = 363) => do_mount_rootfs(key_ptr: *const sgx_key_128bit_t, occlum_json_mac_ptr: *const sgx_aes_gcm_128bit_tag_t),
         }
     };
 }
@@ -831,6 +835,17 @@ fn do_clock_gettime(clockid: clockid_t, ts_u: *mut timespec_t) -> Result<isize> 
     Ok(0)
 }
 
+fn do_time(tloc_u: *mut time_t) -> Result<isize> {
+    let ts = time::do_clock_gettime(time::ClockID::CLOCK_REALTIME)?;
+    if !tloc_u.is_null() {
+        check_mut_ptr(tloc_u)?;
+        unsafe {
+            *tloc_u = ts.sec();
+        }
+    }
+    Ok(ts.sec() as isize)
+}
+
 fn do_clock_getres(clockid: clockid_t, res_u: *mut timespec_t) -> Result<isize> {
     if res_u.is_null() {
         return Ok(0);
@@ -908,11 +923,11 @@ pub struct FpRegs {
 impl FpRegs {
     /// Save the current CPU floating pointer states to an instance of FpRegs
     pub fn save() -> Self {
-        let mut fpregs = FpRegs {
-            inner: Aligned([0u8; 512]),
-        };
-        unsafe { _fxsave(fpregs.inner.as_mut_ptr()) };
-        fpregs
+        let mut fpregs = MaybeUninit::<Self>::uninit();
+        unsafe {
+            _fxsave(fpregs.as_mut_ptr() as *mut u8);
+            fpregs.assume_init()
+        }
     }
 
     /// Restore the current CPU floating pointer states from this FpRegs instance
@@ -993,4 +1008,25 @@ impl CpuContext {
             fpregs: ptr::null_mut(),
         }
     }
+}
+
+// exception and interrupt syscalls share the same c abi
+//
+// num: occlum syscall number
+// info: pointer to sgx_exception_info_t or sgx_interrupt_info_t
+// fpregs: pointer to FpRegs. Rust compiler would complain about passing
+//  to external C functions a CpuContext pointer, which includes a FpRegs
+//  pointer that is not safe to use by external modules. In our case, the
+//  FpRegs pointer will not be used actually. So the Rust warning is a
+//  false alarm. We suppress it here.
+pub unsafe fn exception_interrupt_syscall_c_abi(
+    num: u32,
+    info: *mut c_void,
+    fpregs: *mut FpRegs,
+) -> u32 {
+    #[allow(improper_ctypes)]
+    extern "C" {
+        pub fn __occlum_syscall_c_abi(num: u32, info: *mut c_void, fpregs: *mut FpRegs) -> u32;
+    }
+    __occlum_syscall_c_abi(num, info, fpregs)
 }

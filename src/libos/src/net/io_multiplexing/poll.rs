@@ -93,7 +93,6 @@ pub fn do_poll(pollfds: &mut [PollEvent], timeout: *mut timeval_t) -> Result<usi
         if file_ref.as_unix_socket().is_ok()
             || file_ref.as_pipe_reader().is_ok()
             || file_ref.as_pipe_writer().is_ok()
-            || file_ref.as_dev_random().is_ok()
         {
             let events = file_ref.poll()?;
             debug!("polled events are {:?}", events);
@@ -112,12 +111,16 @@ pub fn do_poll(pollfds: &mut [PollEvent], timeout: *mut timeval_t) -> Result<usi
             continue;
         }
 
-        if let Ok(socket) = file_ref.as_socket() {
-            let fd = socket.fd() as FileDesc;
+        if let Ok(socket) = file_ref.as_host_socket() {
+            let fd = socket.host_fd().unwrap().to_raw();
             index_host_pollfds.push(i);
             host_pollfds.push(PollEvent::new(fd, pollfd.events()));
         } else if let Ok(eventfd) = file_ref.as_event() {
-            let fd = eventfd.get_host_fd() as FileDesc;
+            let fd = eventfd.host_fd() as FileDesc;
+            index_host_pollfds.push(i);
+            host_pollfds.push(PollEvent::new(fd, pollfd.events()));
+        } else if let Ok(timerfd) = file_ref.as_timer() {
+            let fd = timerfd.host_fd() as FileDesc;
             index_host_pollfds.push(i);
             host_pollfds.push(PollEvent::new(fd, pollfd.events()));
         } else {
@@ -130,7 +133,7 @@ pub fn do_poll(pollfds: &mut [PollEvent], timeout: *mut timeval_t) -> Result<usi
         .unwrap()
         .get(&current.tid())
         .unwrap()
-        .get_host_fd();
+        .host_fd();
 
     debug!(
         "number of ready libos fd is {}; notifier_host_fd is {}",

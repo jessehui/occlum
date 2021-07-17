@@ -6,8 +6,6 @@
 #![feature(allocator_api)]
 #![feature(core_intrinsics)]
 #![feature(stmt_expr_attributes)]
-#![feature(atomic_min_max)]
-#![feature(no_more_cas)]
 #![feature(alloc_layout_extra)]
 #![feature(concat_idents)]
 #![feature(trace_macros)]
@@ -18,6 +16,10 @@
 #![feature(option_expect_none)]
 // for UntrustedSliceAlloc in slice_alloc
 #![feature(slice_ptr_get)]
+#![feature(maybe_uninit_extra)]
+#![feature(get_mut_unchecked)]
+// for std::hint::black_box
+#![feature(test)]
 
 #[macro_use]
 extern crate alloc;
@@ -29,15 +31,17 @@ extern crate sgx_types;
 #[cfg(not(target_env = "sgx"))]
 #[macro_use]
 extern crate sgx_tstd as std;
+extern crate goblin;
+extern crate scroll;
 extern crate sgx_tcrypto;
 extern crate sgx_trts;
 extern crate sgx_tse;
-extern crate xmas_elf;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
 extern crate log;
 extern crate rcore_fs;
+extern crate rcore_fs_devfs;
 extern crate rcore_fs_mountfs;
 extern crate rcore_fs_ramfs;
 extern crate rcore_fs_sefs;
@@ -47,6 +51,8 @@ extern crate derive_builder;
 extern crate ringbuf;
 extern crate serde;
 extern crate serde_json;
+#[macro_use]
+extern crate memoffset;
 
 use sgx_trts::libc;
 use sgx_types::*;
@@ -64,6 +70,7 @@ mod error;
 
 mod config;
 mod entry;
+mod events;
 mod exception;
 mod fs;
 mod interrupt;

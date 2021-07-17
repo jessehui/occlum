@@ -1,10 +1,12 @@
 use super::event_file::EventCreationFlags;
 use super::file_ops;
 use super::file_ops::{
-    AccessibilityCheckFlags, AccessibilityCheckMode, ChmodFlags, ChownFlags, FcntlCmd, FsPath,
-    LinkFlags, StatFlags, UnlinkFlags, AT_FDCWD,
+    AccessibilityCheckFlags, AccessibilityCheckMode, ChownFlags, FcntlCmd, FsPath, LinkFlags,
+    StatFlags, UnlinkFlags, AT_FDCWD,
 };
 use super::fs_ops;
+use super::time::{clockid_t, itimerspec_t, ClockID};
+use super::timer_file::{TimerCreationFlags, TimerSetFlags};
 use super::*;
 use util::mem_util::from_user;
 
@@ -23,9 +25,9 @@ pub fn do_eventfd2(init_val: u32, flags: i32) -> Result<isize> {
 
     let inner_flags =
         EventCreationFlags::from_bits(flags).ok_or_else(|| errno!(EINVAL, "invalid flags"))?;
-    let file_ref: Arc<Box<dyn File>> = {
+    let file_ref: Arc<dyn File> = {
         let event = EventFile::new(init_val, inner_flags)?;
-        Arc::new(Box::new(event))
+        Arc::new(event)
     };
 
     let fd = current!().add_file(
@@ -33,6 +35,66 @@ pub fn do_eventfd2(init_val: u32, flags: i32) -> Result<isize> {
         inner_flags.contains(EventCreationFlags::EFD_CLOEXEC),
     );
     Ok(fd as isize)
+}
+
+pub fn do_timerfd_create(clockid: clockid_t, flags: i32) -> Result<isize> {
+    debug!("timerfd: clockid {}, flags {} ", clockid, flags);
+
+    let clockid = ClockID::from_raw(clockid)?;
+    match clockid {
+        ClockID::CLOCK_REALTIME | ClockID::CLOCK_MONOTONIC => {}
+        _ => {
+            return_errno!(EINVAL, "invalid clockid");
+        }
+    }
+    let timer_create_flags =
+        TimerCreationFlags::from_bits(flags).ok_or_else(|| errno!(EINVAL, "invalid flags"))?;
+    let file_ref: Arc<dyn File> = {
+        let timer = TimerFile::new(clockid, timer_create_flags)?;
+        Arc::new(timer)
+    };
+
+    let fd = current!().add_file(
+        file_ref,
+        timer_create_flags.contains(TimerCreationFlags::TFD_CLOEXEC),
+    );
+    Ok(fd as isize)
+}
+
+pub fn do_timerfd_settime(
+    fd: FileDesc,
+    flags: i32,
+    new_value_ptr: *const itimerspec_t,
+    old_value_ptr: *mut itimerspec_t,
+) -> Result<isize> {
+    from_user::check_ptr(new_value_ptr)?;
+    let new_value = itimerspec_t::from_raw_ptr(new_value_ptr)?;
+    let timer_set_flags =
+        TimerSetFlags::from_bits(flags).ok_or_else(|| errno!(EINVAL, "invalid flags"))?;
+
+    let current = current!();
+    let file = current.file(fd)?;
+    let timerfile = file.as_timer()?;
+    let old_value = timerfile.set_time(timer_set_flags, &new_value)?;
+    if !old_value_ptr.is_null() {
+        from_user::check_mut_ptr(old_value_ptr)?;
+        unsafe {
+            old_value_ptr.write(old_value);
+        }
+    }
+    Ok(0)
+}
+
+pub fn do_timerfd_gettime(fd: FileDesc, curr_value_ptr: *mut itimerspec_t) -> Result<isize> {
+    from_user::check_mut_ptr(curr_value_ptr)?;
+    let current = current!();
+    let file = current.file(fd)?;
+    let timerfile = file.as_timer()?;
+    let curr_value = timerfile.time()?;
+    unsafe {
+        curr_value_ptr.write(curr_value);
+    }
+    Ok(0)
 }
 
 pub fn do_open(path: *const i8, flags: u32, mode: u32) -> Result<isize> {
@@ -248,6 +310,15 @@ pub fn do_getdents64(fd: FileDesc, buf: *mut u8, buf_size: usize) -> Result<isiz
     Ok(len as isize)
 }
 
+pub fn do_getdents(fd: FileDesc, buf: *mut u8, buf_size: usize) -> Result<isize> {
+    let safe_buf = {
+        from_user::check_mut_array(buf, buf_size)?;
+        unsafe { std::slice::from_raw_parts_mut(buf, buf_size) }
+    };
+    let len = file_ops::do_getdents(fd, safe_buf)?;
+    Ok(len as isize)
+}
+
 pub fn do_sync() -> Result<isize> {
     fs_ops::do_sync()?;
     Ok(0)
@@ -305,8 +376,7 @@ pub fn do_getcwd(buf_ptr: *mut u8, size: usize) -> Result<isize> {
     buf[..cwd.len()].copy_from_slice(cwd.as_bytes());
     buf[cwd.len()] = 0;
 
-    // getcwd requires returning buf_ptr if success
-    Ok(buf_ptr as isize)
+    Ok(buf.len() as isize)
 }
 
 pub fn do_rename(oldpath: *const i8, newpath: *const i8) -> Result<isize> {
@@ -425,7 +495,7 @@ pub fn do_symlinkat(target: *const i8, new_dirfd: i32, link_path: *const i8) -> 
 }
 
 pub fn do_chmod(path: *const i8, mode: u16) -> Result<isize> {
-    self::do_fchmodat(AT_FDCWD, path, mode, 0)
+    self::do_fchmodat(AT_FDCWD, path, mode)
 }
 
 pub fn do_fchmod(fd: FileDesc, mode: u16) -> Result<isize> {
@@ -434,14 +504,13 @@ pub fn do_fchmod(fd: FileDesc, mode: u16) -> Result<isize> {
     Ok(0)
 }
 
-pub fn do_fchmodat(dirfd: i32, path: *const i8, mode: u16, flags: i32) -> Result<isize> {
+pub fn do_fchmodat(dirfd: i32, path: *const i8, mode: u16) -> Result<isize> {
     let path = from_user::clone_cstring_safely(path)?
         .to_string_lossy()
         .into_owned();
     let mode = FileMode::from_bits_truncate(mode);
     let fs_path = FsPath::new(&path, dirfd, false)?;
-    let flags = ChmodFlags::from_bits(flags).ok_or_else(|| errno!(EINVAL, "invalid flags"))?;
-    file_ops::do_fchmodat(&fs_path, mode, flags)?;
+    file_ops::do_fchmodat(&fs_path, mode)?;
     Ok(0)
 }
 
@@ -509,5 +578,61 @@ pub fn do_ioctl(fd: FileDesc, cmd: u32, argp: *mut u8) -> Result<isize> {
         IoctlCmd::new(cmd, argp)?
     };
     file_ops::do_ioctl(fd, &mut ioctl_cmd)?;
+    Ok(0)
+}
+
+pub fn do_mount_rootfs(
+    key_ptr: *const sgx_key_128bit_t,
+    occlum_json_mac_ptr: *const sgx_aes_gcm_128bit_tag_t,
+) -> Result<isize> {
+    let key = if key_ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { key_ptr.read() })
+    };
+    if occlum_json_mac_ptr.is_null() {
+        return_errno!(EINVAL, "occlum_json_mac_ptr cannot be null");
+    }
+    let expected_occlum_json_mac = unsafe { occlum_json_mac_ptr.read() };
+    let user_config_path = unsafe { format!("{}{}", INSTANCE_DIR, "/build/Occlum.json.protected") };
+    let user_config = config::load_config(&user_config_path, &expected_occlum_json_mac)?;
+    fs_ops::do_mount_rootfs(&user_config, &key)?;
+    Ok(0)
+}
+
+pub fn do_fallocate(fd: FileDesc, mode: u32, offset: off_t, len: off_t) -> Result<isize> {
+    if offset < 0 || len <= 0 {
+        return_errno!(
+            EINVAL,
+            "offset was less than 0, or len was less than or equal to 0"
+        );
+    }
+    // Current implementation is just the posix_fallocate
+    // TODO: Support more modes in fallocate
+    if mode != 0 {
+        return_errno!(ENOSYS, "unsupported mode");
+    }
+    file_ops::do_fallocate(fd, mode, offset as u64, len as u64)?;
+    Ok(0)
+}
+
+pub fn do_fstatfs(fd: FileDesc, statfs_buf: *mut Statfs) -> Result<isize> {
+    from_user::check_mut_ptr(statfs_buf)?;
+
+    let statfs = fs_ops::do_fstatfs(fd)?;
+    unsafe {
+        statfs_buf.write(statfs);
+    }
+    Ok(0)
+}
+
+pub fn do_statfs(path: *const i8, statfs_buf: *mut Statfs) -> Result<isize> {
+    let path = from_user::clone_cstring_safely(path)?
+        .to_string_lossy()
+        .into_owned();
+    let statfs = fs_ops::do_statfs(&path)?;
+    unsafe {
+        statfs_buf.write(statfs);
+    }
     Ok(0)
 }

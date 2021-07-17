@@ -8,10 +8,9 @@ pub fn do_openat(fs_path: &FsPath, flags: u32, mode: u32) -> Result<FileDesc> {
 
     let path = fs_path.to_abs_path()?;
     let current = current!();
-    let fs = current.fs().lock().unwrap();
+    let fs = current.fs().read().unwrap();
 
-    let file = fs.open_file(&path, flags, mode)?;
-    let file_ref: Arc<Box<dyn File>> = Arc::new(file);
+    let file_ref: Arc<dyn File> = fs.open_file(&path, flags, mode)?;
 
     let fd = {
         let creation_flags = CreationFlags::from_bits_truncate(flags);

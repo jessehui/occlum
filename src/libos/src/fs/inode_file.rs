@@ -1,4 +1,5 @@
 use super::*;
+use crate::net::PollEventFlags;
 use rcore_fs_sefs::dev::SefsMac;
 
 pub struct INodeFile {
@@ -120,6 +121,11 @@ impl File for INodeFile {
         Ok(())
     }
 
+    fn fallocate(&self, mode: u32, offset: u64, len: u64) -> Result<()> {
+        self.inode.fallocate(mode, offset, len)?;
+        Ok(())
+    }
+
     fn set_len(&self, len: u64) -> Result<()> {
         if !self.access_mode.writable() {
             return_errno!(EACCES, "File not writable. Can't set len.");
@@ -138,21 +144,22 @@ impl File for INodeFile {
         Ok(())
     }
 
-    fn read_entry(&self) -> Result<String> {
+    fn iterate_entries(&self, writer: &mut dyn DirentWriter) -> Result<usize> {
         if !self.access_mode.readable() {
             return_errno!(EACCES, "File not readable. Can't read entry.");
         }
         let mut offset = self.offset.lock().unwrap();
-        let name = self.inode.get_entry(*offset)?;
-        *offset += 1;
-        Ok(name)
+        let mut dir_ctx = DirentWriterContext::new(*offset, writer);
+        let written_size = self.inode.iterate_entries(&mut dir_ctx)?;
+        *offset = dir_ctx.pos();
+        Ok(written_size)
     }
 
-    fn get_access_mode(&self) -> Result<AccessMode> {
+    fn access_mode(&self) -> Result<AccessMode> {
         Ok(self.access_mode.clone())
     }
 
-    fn get_status_flags(&self) -> Result<StatusFlags> {
+    fn status_flags(&self) -> Result<StatusFlags> {
         let status_flags = self.status_flags.read().unwrap();
         Ok(status_flags.clone())
     }
@@ -196,6 +203,29 @@ impl File for INodeFile {
         Ok(())
     }
 
+    fn ioctl(&self, cmd: &mut IoctlCmd) -> Result<i32> {
+        match cmd {
+            IoctlCmd::TCGETS(_) => return_errno!(ENOTTY, "not tty device"),
+            IoctlCmd::TCSETS(_) => return_errno!(ENOTTY, "not tty device"),
+            _ => {}
+        };
+        let cmd_num = cmd.cmd_num();
+        let cmd_argp = cmd.arg_ptr() as usize;
+        self.inode.io_control(cmd_num, cmd_argp)?;
+        Ok(0)
+    }
+
+    fn poll_new(&self) -> IoEvents {
+        match self.inode.poll() {
+            Ok(poll_status) => IoEvents::from_poll_status(&poll_status),
+            Err(_) => IoEvents::empty(),
+        }
+    }
+
+    fn fs(&self) -> Result<Arc<dyn FileSystem>> {
+        Ok(self.inode.fs())
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -213,6 +243,14 @@ impl INodeFile {
         if access_mode.writable() && inode.metadata()?.type_ == FileType::Dir {
             return_errno!(EISDIR, "Directory cannot be open to write");
         }
+        let creation_flags = CreationFlags::from_bits_truncate(flags);
+        if creation_flags.should_truncate()
+            && inode.metadata()?.type_ == FileType::File
+            && access_mode.writable()
+        {
+            // truncate the length to 0
+            inode.resize(0)?;
+        }
         let status_flags = StatusFlags::from_bits_truncate(flags);
         Ok(INodeFile {
             inode,
@@ -223,7 +261,7 @@ impl INodeFile {
         })
     }
 
-    pub fn get_abs_path(&self) -> &str {
+    pub fn abs_path(&self) -> &str {
         &self.abs_path
     }
 }

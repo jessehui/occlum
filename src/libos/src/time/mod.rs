@@ -13,6 +13,7 @@ pub mod timer_slack;
 pub mod up_time;
 
 pub use profiler::ThreadProfiler;
+pub use timer_slack::TIMERSLACK;
 
 #[allow(non_camel_case_types)]
 pub type time_t = i64;
@@ -52,6 +53,15 @@ impl timeval_t {
     }
 }
 
+impl From<Duration> for timeval_t {
+    fn from(duration: Duration) -> timeval_t {
+        let sec = duration.as_secs() as time_t;
+        let usec = duration.subsec_micros() as i64;
+        debug_assert!(sec >= 0); // nsec >= 0 always holds
+        timeval_t { sec, usec }
+    }
+}
+
 pub fn do_gettimeofday() -> timeval_t {
     extern "C" {
         fn occlum_ocall_gettimeofday(tv: *mut timeval_t) -> sgx_status_t;
@@ -71,6 +81,15 @@ pub fn do_gettimeofday() -> timeval_t {
 pub struct timespec_t {
     sec: time_t,
     nsec: i64,
+}
+
+impl From<Duration> for timespec_t {
+    fn from(duration: Duration) -> timespec_t {
+        let sec = duration.as_secs() as time_t;
+        let nsec = duration.subsec_nanos() as i64;
+        debug_assert!(sec >= 0); // nsec >= 0 always holds
+        timespec_t { sec, nsec }
+    }
 }
 
 impl timespec_t {
@@ -231,5 +250,27 @@ impl TimeProvider for OcclumTimeProvider {
             sec: time.sec,
             nsec: time.usec as i32 * 1000,
         }
+    }
+}
+
+// For Timerfd
+#[repr(C)]
+#[derive(Debug, Default, Copy, Clone)]
+#[allow(non_camel_case_types)]
+pub struct itimerspec_t {
+    it_interval: timespec_t,
+    it_value: timespec_t,
+}
+
+impl itimerspec_t {
+    pub fn from_raw_ptr(ptr: *const itimerspec_t) -> Result<itimerspec_t> {
+        let its = unsafe { *ptr };
+        its.validate()?;
+        Ok(its)
+    }
+    pub fn validate(&self) -> Result<()> {
+        self.it_interval.validate()?;
+        self.it_value.validate()?;
+        Ok(())
     }
 }

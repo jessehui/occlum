@@ -14,7 +14,7 @@ To evaluate Occlum in non-docker environment, installers are needed. Occlum prov
 
 Normally, Occlum installers should be provided together with release. However, users can also build them on their own.
 
-To build RPM packages, a docker container with Occlum CentOS image (based on CentOS 8.1) is needed. Execute below commands under the occlum directory:
+To build RPM packages, a docker container with Occlum CentOS image (based on CentOS 8.2) is needed. Execute below commands under the occlum directory:
 ```
 cd tools/installer/rpm
 make
@@ -26,7 +26,7 @@ If a user wants to build his application on a platform installed with Occlum ins
 cd tools/installer/rpm
 make <language option>
 ```
-Now, only `c/c++` option is supported. And the installer can be found under `build/rpms`.
+Now, only `musl-gcc` and `golang` options are supported. And the installer can be found under `build/rpms`.
 
 ### How to Use
 
@@ -42,11 +42,11 @@ yum install -y ocaml ocaml-ocamlbuild
 ```
 
 **Step 2. Install Intel® SGX driver and Intel® SGX PSW**
-Please follow [Intel SGX Installation Guide](https://download.01.org/intel-sgx/sgx-linux/2.9.1/docs/Intel_SGX_Installation_Guide_Linux_2.9.1_Open_Source.pdf) to install SGX driver and SGX PSW. SGX SDK is not required. Using RPM installer is recommanded.
+Please follow [Intel SGX Installation Guide](https://download.01.org/intel-sgx/sgx-linux/2.13/docs/Intel_SGX_Installation_Guide_Linux_2.13_Open_Source.pdf) to install SGX driver and SGX PSW. SGX SDK is not required. Using RPM installer is recommanded.
 
 Also, UAE service libraries are needed but may not installed together with SGX PSW if SGX PSW installer is used. Go to SGX RPM local repo and run:
 ```
-rpm -i libsgx-uae-service-2.9.101.2-1.el7.x86_64.rpm
+rpm -i libsgx-uae-service-*.rpm
 ```
 
 **Step 3. Install enable_RDFSBASE Kernel Module**
@@ -59,9 +59,17 @@ rpm -i occlum-pal-*.rpm
 rpm -i occlum-runtime-*.rpm
 ```
 
-Toolchains are needed when compiling applications and also during runtime. Choose to install the toolchain installer based on the application's language. Currently, we only supports `C/C++`. More language toolchain installers are on the way. To install `C/C++` toolchain, just run the command:
+Toolchains are needed when compiling applications and also during runtime. C/C++ toolchain is a must for Occlum commands.
+To install C/C++ toolchain, just run the command:
 ```
 rpm -i occlum-toolchains-gcc-*.rpm
+```
+
+Besides, users can choose to install the toolchain installer based on the application's language. Currently, we also supports Golang. More language toolchain installers are on the way. To install Golang toolchain, run the below commands:
+```
+yum install -y epel-release
+yum install -y rc
+rpm -i occlum-toolchains-golang-*.rpm
 ```
 
 At last, install `occlum` package to get complete support of Occlum:
@@ -99,7 +107,7 @@ If a user wants to build his application on a platform installed with Occlum ins
 cd tools/installer/deb
 make <language option>
 ```
-Now, only `c/c++` option is supported. And the installer can be found under `build/debs`.
+Now, only `musl-gcc` and `golang` options are supported. And the installer can be found under `build/debs`.
 
 ### How to Use
 
@@ -113,7 +121,7 @@ apt-get install -y --no-install-recommends libcurl4-openssl-dev libssl-dev libpr
 ```
 
 **Step 2. Install Intel® SGX driver and Intel® SGX PSW**
-Please follow [Intel SGX Installation Guide](https://download.01.org/intel-sgx/sgx-linux/2.9.1/docs/Intel_SGX_Installation_Guide_Linux_2.9.1_Open_Source.pdf) to install SGX driver and SGX PSW. SGX SDK is not required. Using PSW installer is recommanded.
+Please follow [Intel SGX Installation Guide](https://download.01.org/intel-sgx/sgx-linux/2.13/docs/Intel_SGX_Installation_Guide_Linux_2.13_Open_Source.pdf) to install SGX driver and SGX PSW. SGX SDK is not required. Using PSW installer is recommanded.
 
 To install PSW, follow the guide to add Intel® SGX repository to apt source. And then run:
 ```
@@ -123,7 +131,7 @@ apt-get install -y libsgx-epid libsgx-urts libsgx-quote-ex libsgx-uae-service
 
 After installing PSW, please make sure that the aesm service is running:
 ```
-service status aesmd
+service aesmd status
 ```
 
 **Step 3. Install enable_RDFSBASE Kernel Module**
@@ -137,9 +145,15 @@ apt install -y ./occlum-pal*.deb
 apt install -y ./occlum-sgx-tools*.deb
 ```
 
-Currently, we only supports `C/C++`. More language toolchain installers are on the way. To install `C/C++` toolchain, just run the command:
+Toolchains are needed when compiling applications and also during runtime. C/C++ toolchain is a must for Occlum commands.
+To install C/C++ toolchain, just run the command:
 ```
 apt install -y ./occlum-toolchains-gcc*.deb
+```
+
+Besides, users can choose to install the toolchain installer based on the application's language. Currently, we also supports Golang. More language toolchain installers are on the way. To install Golang toolchain, run the below commands:
+```
+apt install -y ./occlum-toolchains-golang*.deb
 ```
 
 At last, install `occlum` package to get complete support of Occlum:

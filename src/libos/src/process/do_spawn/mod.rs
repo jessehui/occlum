@@ -2,15 +2,15 @@ use std::ffi::{CStr, CString};
 use std::path::Path;
 
 use self::aux_vec::{AuxKey, AuxVec};
-use self::exec_loader::{load_exec_file_to_vec, load_file_to_vec};
-use super::elf_file::{ElfFile, ElfHeader, ProgramHeader, ProgramHeaderExt};
+use self::exec_loader::{load_exec_file_hdr_to_vec, load_file_hdr_to_vec};
+use super::elf_file::{ElfFile, ElfHeader, ProgramHeaderExt};
 use super::process::ProcessBuilder;
+use super::spawn_attribute::SpawnAttr;
 use super::task::Task;
-use super::thread::ThreadName;
+use super::thread::{ThreadId, ThreadName};
 use super::{table, task, ProcessRef, ThreadRef};
 use crate::fs::{
     CreationFlags, File, FileDesc, FileTable, FsView, HostStdioFds, StdinFile, StdoutFile,
-    ROOT_INODE,
 };
 use crate::prelude::*;
 use crate::vm::ProcessVM;
@@ -26,6 +26,7 @@ pub fn do_spawn(
     argv: &[CString],
     envp: &[CString],
     file_actions: &[FileAction],
+    spawn_attributes: Option<SpawnAttr>,
     current_ref: &ThreadRef,
 ) -> Result<pid_t> {
     let exec_now = true;
@@ -34,6 +35,7 @@ pub fn do_spawn(
         argv,
         envp,
         file_actions,
+        spawn_attributes,
         None,
         current_ref,
         exec_now,
@@ -46,6 +48,7 @@ pub fn do_spawn_without_exec(
     argv: &[CString],
     envp: &[CString],
     file_actions: &[FileAction],
+    spawn_attributes: Option<SpawnAttr>,
     host_stdio_fds: &HostStdioFds,
     current_ref: &ThreadRef,
 ) -> Result<pid_t> {
@@ -55,6 +58,7 @@ pub fn do_spawn_without_exec(
         argv,
         envp,
         file_actions,
+        spawn_attributes,
         Some(host_stdio_fds),
         current_ref,
         exec_now,
@@ -66,6 +70,7 @@ fn do_spawn_common(
     argv: &[CString],
     envp: &[CString],
     file_actions: &[FileAction],
+    spawn_attributes: Option<SpawnAttr>,
     host_stdio_fds: Option<&HostStdioFds>,
     current_ref: &ThreadRef,
     exec_now: bool,
@@ -75,6 +80,7 @@ fn do_spawn_common(
         argv,
         envp,
         file_actions,
+        spawn_attributes,
         host_stdio_fds,
         current_ref,
     )?;
@@ -98,11 +104,63 @@ fn new_process(
     argv: &[CString],
     envp: &[CString],
     file_actions: &[FileAction],
+    spawn_attributes: Option<SpawnAttr>,
     host_stdio_fds: Option<&HostStdioFds>,
     current_ref: &ThreadRef,
 ) -> Result<ProcessRef> {
+    let new_process_ref = new_process_common(
+        file_path,
+        argv,
+        envp,
+        file_actions,
+        spawn_attributes,
+        host_stdio_fds,
+        current_ref,
+        None,
+    )?;
+    table::add_process(new_process_ref.clone());
+    table::add_thread(new_process_ref.main_thread().unwrap());
+
+    Ok(new_process_ref)
+}
+
+/// Create a new process for execve which will use same parent, pid, tid
+pub fn new_process_for_exec(
+    file_path: &str,
+    argv: &[CString],
+    envp: &[CString],
+    current_ref: &ThreadRef,
+) -> Result<ProcessRef> {
+    let tid = ThreadId {
+        tid: current_ref.process().pid() as u32,
+    };
+    let new_process_ref = new_process_common(
+        file_path,
+        argv,
+        envp,
+        &Vec::new(),
+        None,
+        None,
+        current_ref,
+        Some(tid),
+    )?;
+
+    Ok(new_process_ref)
+}
+
+fn new_process_common(
+    file_path: &str,
+    argv: &[CString],
+    envp: &[CString],
+    file_actions: &[FileAction],
+    spawn_attributes: Option<SpawnAttr>,
+    host_stdio_fds: Option<&HostStdioFds>,
+    current_ref: &ThreadRef,
+    reuse_tid: Option<ThreadId>,
+) -> Result<ProcessRef> {
     let mut argv = argv.clone().to_vec();
-    let (is_script, elf_buf) = load_exec_file_to_vec(file_path, current_ref)?;
+    let (is_script, elf_inode, mut elf_buf, elf_header) =
+        load_exec_file_hdr_to_vec(file_path, current_ref)?;
 
     // elf_path might be different from file_path because file_path could lead to a script text file.
     // And intepreter will be the loaded ELF.
@@ -117,20 +175,28 @@ fn new_process(
         file_path.to_string()
     };
 
-    let ldso_path = "/lib/ld-musl-x86_64.so.1";
-    let ldso_elf_buf = load_file_to_vec(ldso_path, current_ref)
-        .cause_err(|e| errno!(e.errno(), "cannot load ld.so"))?;
-
-    let exec_elf_file =
-        ElfFile::new(&elf_buf).cause_err(|e| errno!(e.errno(), "invalid executable"))?;
-    let ldso_elf_file =
-        ElfFile::new(&ldso_elf_buf).cause_err(|e| errno!(e.errno(), "invalid ld.so"))?;
+    let exec_elf_hdr = ElfFile::new(&elf_inode, &mut elf_buf, elf_header)
+        .cause_err(|e| errno!(e.errno(), "invalid executable"))?;
+    let ldso_path = exec_elf_hdr
+        .elf_interpreter()
+        .ok_or_else(|| errno!(EINVAL, "cannot find the interpreter segment"))?;
+    trace!("ldso_path = {:?}", ldso_path);
+    let (ldso_inode, mut ldso_elf_hdr_buf, ldso_elf_header) =
+        load_file_hdr_to_vec(ldso_path, current_ref)
+            .cause_err(|e| errno!(e.errno(), "cannot load ld.so"))?;
+    let ldso_elf_header = if ldso_elf_header.is_none() {
+        return_errno!(ENOEXEC, "ldso header is not ELF format");
+    } else {
+        ldso_elf_header.unwrap()
+    };
+    let ldso_elf_hdr = ElfFile::new(&ldso_inode, &mut ldso_elf_hdr_buf, ldso_elf_header)
+        .cause_err(|e| errno!(e.errno(), "invalid ld.so"))?;
 
     let new_process_ref = {
         let process_ref = current_ref.process().clone();
 
-        let vm = init_vm::do_init(&exec_elf_file, &ldso_elf_file)?;
-        let auxvec = init_auxvec(&vm, &exec_elf_file)?;
+        let vm = init_vm::do_init(&exec_elf_hdr, &ldso_elf_hdr)?;
+        let mut auxvec = init_auxvec(&vm, &exec_elf_hdr)?;
 
         // Notify debugger to load the symbols from elf file
         let ldso_elf_base = vm.get_elf_ranges()[1].start() as u64;
@@ -153,8 +219,7 @@ fn new_process(
         let task = {
             let ldso_entry = {
                 let ldso_range = vm.get_elf_ranges()[1];
-                let ldso_entry =
-                    ldso_range.start() + ldso_elf_file.elf_header().entry_point() as usize;
+                let ldso_entry = ldso_range.start() + ldso_elf_hdr.elf_header().e_entry as usize;
                 if !ldso_range.contains(ldso_entry) {
                     return_errno!(EINVAL, "Invalid program entry");
                 }
@@ -162,7 +227,7 @@ fn new_process(
             };
             let user_stack_base = vm.get_stack_base();
             let user_stack_limit = vm.get_stack_limit();
-            let user_rsp = init_stack::do_init(user_stack_base, 4096, &argv, envp, &auxvec)?;
+            let user_rsp = init_stack::do_init(user_stack_base, 4096, &argv, envp, &mut auxvec)?;
             unsafe {
                 Task::new(
                     ldso_entry,
@@ -178,29 +243,59 @@ fn new_process(
             let files = init_files(current_ref, file_actions, host_stdio_fds)?;
             Arc::new(SgxMutex::new(files))
         };
-        let fs_ref = Arc::new(SgxMutex::new(current_ref.fs().lock().unwrap().clone()));
+        let fs_ref = Arc::new(RwLock::new(current_ref.fs().read().unwrap().clone()));
         let sched_ref = Arc::new(SgxMutex::new(current_ref.sched().lock().unwrap().clone()));
         let rlimit_ref = Arc::new(SgxMutex::new(current_ref.rlimits().lock().unwrap().clone()));
+        let sig_mask = if spawn_attributes.is_some() && spawn_attributes.unwrap().sig_mask.is_some()
+        {
+            spawn_attributes.unwrap().sig_mask.unwrap()
+        } else {
+            current_ref.sig_mask().read().unwrap().clone()
+        };
+        trace!("new process sigmask = {:?}", sig_mask);
+
+        let mut sig_dispositions = current_ref
+            .process()
+            .sig_dispositions()
+            .read()
+            .unwrap()
+            .clone();
+        sig_dispositions.inherit();
+        if spawn_attributes.is_some() && spawn_attributes.unwrap().sig_default.is_some() {
+            let sig_default_set = spawn_attributes.unwrap().sig_default.unwrap();
+            sig_default_set.iter().for_each(|b| {
+                sig_dispositions.set_default(b);
+            })
+        }
+        trace!("new process sig_dispositions = {:?}", sig_dispositions);
 
         // Make the default thread name to be the process's corresponding elf file name
         let elf_name = elf_path.rsplit('/').collect::<Vec<&str>>()[0];
         let thread_name = ThreadName::new(elf_name);
 
-        ProcessBuilder::new()
+        let mut parent;
+        let mut process_builder = ProcessBuilder::new();
+        if reuse_tid.is_some() {
+            process_builder = process_builder.tid(reuse_tid.unwrap());
+            parent = current!().process().parent();
+        } else {
+            parent = process_ref;
+        }
+
+        process_builder
             .vm(vm_ref)
             .exec_path(&elf_path)
-            .parent(process_ref)
+            .parent(parent)
             .task(task)
             .sched(sched_ref)
             .rlimits(rlimit_ref)
             .fs(fs_ref)
             .files(files_ref)
+            .sig_mask(sig_mask)
             .name(thread_name)
+            .sig_dispositions(sig_dispositions)
             .build()?
     };
-
-    table::add_process(new_process_ref.clone());
-    table::add_thread(new_process_ref.main_thread().unwrap());
 
     info!(
         "Process created: elf = {}, pid = {}",
@@ -244,13 +339,12 @@ fn init_files(
                     oflag,
                     fd,
                 } => {
-                    let file =
+                    let file_ref =
                         current_ref
                             .fs()
-                            .lock()
+                            .read()
                             .unwrap()
                             .open_file(path.as_str(), oflag, mode)?;
-                    let file_ref: Arc<Box<dyn File>> = Arc::new(file);
                     let creation_flags = CreationFlags::from_bits_truncate(oflag);
                     cloned_file_table.put_at(fd, file_ref, creation_flags.must_close_on_spawn());
                 }
@@ -273,15 +367,14 @@ fn init_files(
 
     // But, for init process, we initialize file table for it
     let mut file_table = FileTable::new();
-    let stdin: Arc<Box<dyn File>> = Arc::new(Box::new(StdinFile::new(
-        host_stdio_fds.unwrap().stdin_fd as FileDesc,
-    )));
-    let stdout: Arc<Box<dyn File>> = Arc::new(Box::new(StdoutFile::new(
+    let stdin: Arc<dyn File> =
+        Arc::new(StdinFile::new(host_stdio_fds.unwrap().stdin_fd as FileDesc));
+    let stdout: Arc<dyn File> = Arc::new(StdoutFile::new(
         host_stdio_fds.unwrap().stdout_fd as FileDesc,
-    )));
-    let stderr: Arc<Box<dyn File>> = Arc::new(Box::new(StdoutFile::new(
+    ));
+    let stderr: Arc<dyn File> = Arc::new(StdoutFile::new(
         host_stdio_fds.unwrap().stderr_fd as FileDesc,
-    )));
+    ));
 
     file_table.put(stdin, false);
     file_table.put(stdout, false);
@@ -301,12 +394,14 @@ fn init_auxvec(process_vm: &ProcessVM, exec_elf_file: &ElfFile) -> Result<AuxVec
 
     let exec_elf_base = process_vm.get_elf_ranges()[0].start() as u64;
     let exec_elf_header = exec_elf_file.elf_header();
-    auxvec.set(AuxKey::AT_PHENT, exec_elf_header.ph_entry_size() as u64)?;
-    auxvec.set(AuxKey::AT_PHNUM, exec_elf_header.ph_count() as u64)?;
-    auxvec.set(AuxKey::AT_PHDR, exec_elf_base + exec_elf_header.ph_offset())?;
+    auxvec.set(AuxKey::AT_PHENT, exec_elf_header.e_phentsize as u64)?;
+    auxvec.set(AuxKey::AT_PHNUM, exec_elf_header.e_phnum as u64)?;
+    auxvec.set(AuxKey::AT_PHDR, exec_elf_base + exec_elf_header.e_phoff)?;
+
+    let base_load_address_offset = exec_elf_file.base_load_address_offset();
     auxvec.set(
         AuxKey::AT_ENTRY,
-        exec_elf_base + exec_elf_header.entry_point(),
+        exec_elf_base + exec_elf_header.e_entry - base_load_address_offset,
     )?;
 
     let ldso_elf_base = process_vm.get_elf_ranges()[1].start() as u64;

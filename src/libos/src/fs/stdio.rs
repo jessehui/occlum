@@ -96,7 +96,7 @@ impl StdoutFile {
         }
     }
 
-    fn get_host_fd(&self) -> FileDesc {
+    fn host_fd(&self) -> FileDesc {
         self.host_fd
     }
 }
@@ -171,6 +171,8 @@ impl File for StdoutFile {
 
     fn ioctl(&self, cmd: &mut IoctlCmd) -> Result<i32> {
         let can_delegate_to_host = match cmd {
+            IoctlCmd::TCGETS(_) => true,
+            IoctlCmd::TCSETS(_) => true,
             IoctlCmd::TIOCGWINSZ(_) => true,
             IoctlCmd::TIOCSWINSZ(_) => true,
             _ => false,
@@ -181,7 +183,7 @@ impl File for StdoutFile {
 
         let cmd_bits = cmd.cmd_num() as c_int;
         let cmd_arg_ptr = cmd.arg_ptr() as *mut c_void;
-        let host_stdout_fd = self.get_host_fd() as i32;
+        let host_stdout_fd = self.host_fd() as i32;
         let cmd_arg_len = cmd.arg_len();
         let ret = try_libc!({
             let mut retval: i32 = 0;
@@ -258,7 +260,7 @@ impl StdinFile {
         }
     }
 
-    fn get_host_fd(&self) -> FileDesc {
+    fn host_fd(&self) -> FileDesc {
         self.host_fd
     }
 }
@@ -320,6 +322,8 @@ impl File for StdinFile {
 
     fn ioctl(&self, cmd: &mut IoctlCmd) -> Result<i32> {
         let can_delegate_to_host = match cmd {
+            IoctlCmd::TCGETS(_) => true,
+            IoctlCmd::TCSETS(_) => true,
             IoctlCmd::TIOCGWINSZ(_) => true,
             IoctlCmd::TIOCSWINSZ(_) => true,
             _ => false,
@@ -330,7 +334,7 @@ impl File for StdinFile {
 
         let cmd_bits = cmd.cmd_num() as c_int;
         let cmd_arg_ptr = cmd.arg_ptr() as *mut c_void;
-        let host_stdin_fd = self.get_host_fd() as i32;
+        let host_stdin_fd = self.host_fd() as i32;
         let cmd_arg_len = cmd.arg_len();
         let ret = try_libc!({
             let mut retval: i32 = 0;

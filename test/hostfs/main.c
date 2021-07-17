@@ -53,6 +53,50 @@ static int __test_write_read(const char *file_path) {
     return 0;
 }
 
+static int __test_write_fdatasync_read(const char *file_path) {
+    char *write_str = "Write to hostfs and fdatasync successfully!";
+    int fd;
+
+    fd = open(file_path, O_WRONLY);
+    if (fd < 0) {
+        THROW_ERROR("failed to open a file to write");
+    }
+    if (write(fd, write_str, strlen(write_str)) <= 0) {
+        THROW_ERROR("failed to write to the file");
+    }
+    if (fdatasync(fd) < 0) {
+        THROW_ERROR("failed to sync data into file");
+    }
+    close(fd);
+
+    if (fs_check_file_content(file_path, write_str) < 0) {
+        THROW_ERROR("failed to check file content");
+    }
+    return 0;
+}
+
+static int __test_write_fsync_read(const char *file_path) {
+    char *write_str = "Write to hostfs and fsync successfully!";
+    int fd;
+
+    fd = open(file_path, O_WRONLY);
+    if (fd < 0) {
+        THROW_ERROR("failed to open a file to write");
+    }
+    if (write(fd, write_str, strlen(write_str)) <= 0) {
+        THROW_ERROR("failed to write to the file");
+    }
+    if (fsync(fd) < 0) {
+        THROW_ERROR("failed to sync all into file");
+    }
+    close(fd);
+
+    if (fs_check_file_content(file_path, write_str) < 0) {
+        THROW_ERROR("failed to check file content");
+    }
+    return 0;
+}
+
 static int __test_rename(const char *file_path) {
     char *rename_path = "/host/hostfs_rename.txt";
     struct stat stat_buf;
@@ -110,6 +154,21 @@ static int __test_readdir(const char *file_path) {
     return 0;
 }
 
+static int __test_truncate(const char *file_path) {
+    off_t len = 256;
+    if (truncate(file_path, len) < 0) {
+        THROW_ERROR("failed to call truncate");
+    }
+    struct stat stat_buf;
+    if (stat(file_path, &stat_buf) < 0) {
+        THROW_ERROR("failed to stat file");
+    }
+    if (stat_buf.st_size != len) {
+        THROW_ERROR("failed to check the len after truncate");
+    }
+    return 0;
+}
+
 typedef int(*test_hostfs_func_t)(const char *);
 
 static int test_hostfs_framework(test_hostfs_func_t fn) {
@@ -131,12 +190,24 @@ static int test_write_read() {
     return test_hostfs_framework(__test_write_read);
 }
 
+static int test_write_fdatasync_read() {
+    return test_hostfs_framework(__test_write_fdatasync_read);
+}
+
+static int test_write_fsync_read() {
+    return test_hostfs_framework(__test_write_fsync_read);
+}
+
 static int test_rename() {
     return test_hostfs_framework(__test_rename);
 }
 
 static int test_readdir() {
     return test_hostfs_framework(__test_readdir);
+}
+
+static int test_truncate() {
+    return test_hostfs_framework(__test_truncate);
 }
 
 static int test_mkdir_then_rmdir() {
@@ -165,8 +236,11 @@ static int test_mkdir_then_rmdir() {
 
 static test_case_t test_cases[] = {
     TEST_CASE(test_write_read),
+    TEST_CASE(test_write_fdatasync_read),
+    TEST_CASE(test_write_fsync_read),
     TEST_CASE(test_rename),
     TEST_CASE(test_readdir),
+    TEST_CASE(test_truncate),
     TEST_CASE(test_mkdir_then_rmdir),
 };
 

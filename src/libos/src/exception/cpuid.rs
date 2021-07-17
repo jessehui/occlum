@@ -6,9 +6,7 @@ use std::rsgx_cpuidex;
 
 pub const CPUID_OPCODE: u16 = 0xA20F;
 const CPUID_MIN_BASIC_LEAF: u32 = 0;
-const CPUID_MAX_BASIC_LEAF: u32 = 0x1F;
 const CPUID_MIN_EXTEND_LEAF: u32 = 0x8000_0000;
-const CPUID_MAX_EXTEND_LEAF: u32 = 0x8000_0008;
 const CPUID_MAX_SUBLEAF: u32 = u32::max_value();
 
 #[repr(C)]
@@ -81,7 +79,7 @@ impl CpuIdCache {
                         // EDX Bit 00: Reserved.
                         //     Bit 01: Supports L3 Cache Intel RDT Monitoring if 1.
                         //     Bits 31 - 02: Reserved.
-                        0xF => cpuid_result.edx & 0x0000_0002 >> 1,
+                        0xF => (cpuid_result.edx & 0x0000_0002) >> 1,
                         // Reports valid ResID starting at bit position 1 of EBX.
                         // EBX Bit 00: Reserved.
                         //     Bit 01: Supports L3 Cache Allocation Technology if 1.
@@ -146,23 +144,11 @@ impl CpuIdCache {
 impl CpuId {
     pub fn new() -> CpuId {
         let max_basic_leaf = match rsgx_cpuidex(CPUID_MIN_BASIC_LEAF as i32, 0) {
-            Ok(sgx_cpuinfo) => {
-                if is_valid_cpuid_basic_leaf(sgx_cpuinfo[0] as u32) {
-                    sgx_cpuinfo[0] as u32
-                } else {
-                    panic!("invalid basic cpuid_level")
-                }
-            }
+            Ok(sgx_cpuinfo) => sgx_cpuinfo[0] as u32,
             _ => panic!("failed to call sgx_cpuidex"),
         };
         let max_extend_leaf = match rsgx_cpuidex(CPUID_MIN_EXTEND_LEAF as i32, 0) {
-            Ok(sgx_cpuinfo) => {
-                if is_valid_cpuid_extend_leaf(sgx_cpuinfo[0] as u32) {
-                    sgx_cpuinfo[0] as u32
-                } else {
-                    panic!("invalid extend cpuid_xlevel")
-                }
-            }
+            Ok(sgx_cpuinfo) => sgx_cpuinfo[0] as u32,
             _ => panic!("failed to call sgx_cpuidex"),
         };
         let cpuid = CpuId {
@@ -225,14 +211,6 @@ impl CpuId {
 
 lazy_static! {
     static ref CPUID: CpuId = CpuId::new();
-}
-
-fn is_valid_cpuid_basic_leaf(leaf: u32) -> bool {
-    (CPUID_MIN_BASIC_LEAF..=CPUID_MAX_BASIC_LEAF).contains(&leaf)
-}
-
-fn is_valid_cpuid_extend_leaf(leaf: u32) -> bool {
-    (CPUID_MIN_EXTEND_LEAF..=CPUID_MAX_EXTEND_LEAF).contains(&leaf)
 }
 
 fn is_cpuid_leaf_has_subleaves(leaf: u32) -> bool {

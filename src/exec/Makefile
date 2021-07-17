@@ -8,14 +8,26 @@ EXEC_TARGET := $(RUST_OUT_DIR)/*occlum_exec*
 
 .PHONY: all clean
 
+ifneq (, $(shell which sccache))
+    RUSTC_WRAPPER := sccache
+else
+    RUSTC_WRAPPER :=
+endif
+
 all: $(SRC_FILES)
 ifeq ($(OCCLUM_RELEASE_BUILD), 1)
-	@RUSTC_BOOTSTRAP=1 cargo build --release --target-dir=$(RUST_TARGET_DIR) -Z unstable-options --out-dir=$(RUST_OUT_DIR)
+	@RUSTC_BOOTSTRAP=1 RUSTC_WRAPPER=$(RUSTC_WRAPPER) cargo build --release --target-dir=$(RUST_TARGET_DIR) -Z unstable-options --out-dir=$(RUST_OUT_DIR)
 	@echo "CARGO (release) => exec"
 else
-	@RUSTC_BOOTSTRAP=1 cargo build --target-dir=$(RUST_TARGET_DIR) -Z unstable-options --out-dir=$(RUST_OUT_DIR)
+	@RUSTC_BOOTSTRAP=1 RUSTC_WRAPPER=$(RUSTC_WRAPPER) cargo build --target-dir=$(RUST_TARGET_DIR) -Z unstable-options --out-dir=$(RUST_OUT_DIR)
 	@echo "CARGO (debug) => exec"
 endif
+
+format: $(SRC_FILES)
+	@$(call format-rust)
+
+format-check: $(SRC_FILES)
+	@$(call format-check-rust)
 
 clean:
 	@cargo clean --target-dir=$(RUST_TARGET_DIR)

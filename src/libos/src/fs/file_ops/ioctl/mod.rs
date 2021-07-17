@@ -26,10 +26,15 @@ impl_ioctl_nums_and_cmds! {
     // Format:
     // ioctl_name => (ioctl_num, ioctl_type_arg)
 
+    // Get terminal attributes
+    TCGETS => (0x5401, mut Termios), // ignore
+    TCSETS => (0x5402, Termios),
     // Get window size
     TIOCGWINSZ => (0x5413, mut WinSize),
     // Set window size
     TIOCSWINSZ => (0x5414, WinSize),
+    // Set the nonblocking mode for socket
+    FIONBIO => (0x5421, i32),
     // If the given terminal was the controlling terminal of the calling process, give up this
     // controlling terminal. If the process was session leader, then send SIGHUP and SIGCONT to
     // the foreground process group and all processes in the current session lose their controlling
@@ -37,6 +42,10 @@ impl_ioctl_nums_and_cmds! {
     TIOCNOTTY => (0x5422, ()),
     // Get the number of bytes in the input buffer
     FIONREAD => (0x541B, mut i32),
+    // Don't close on exec
+    FIONCLEX => (0x5450, ()),
+    // Set close on exec
+    FIOCLEX => (0x5451, ()),
     // Low-level access to Linux network devices on man7/netdevice.7
     // Only non-privileged operations are supported for now
     SIOCGIFNAME => (0x8910, mut IfReq),
@@ -89,8 +98,21 @@ impl<'a> IoctlCmd<'a> {
 
 pub fn do_ioctl(fd: FileDesc, cmd: &mut IoctlCmd) -> Result<i32> {
     debug!("ioctl: fd: {}, cmd: {:?}", fd, cmd);
-    let file_ref = current!().file(fd)?;
-    file_ref.ioctl(cmd)
+    let current = current!();
+    let file_ref = current.file(fd)?;
+    let mut file_table = current.files().lock().unwrap();
+    let mut entry = file_table.get_entry_mut(fd)?;
+    match cmd {
+        IoctlCmd::FIONCLEX(_) => {
+            entry.set_close_on_spawn(false);
+            return Ok(0);
+        }
+        IoctlCmd::FIOCLEX(_) => {
+            entry.set_close_on_spawn(true);
+            return Ok(0);
+        }
+        _ => return file_ref.ioctl(cmd),
+    }
 }
 
 extern "C" {

@@ -1,8 +1,9 @@
 %define centos_base_release 1
-
 %define _unpackaged_files_terminate_build 0
 %define sgxsdk_install_dir /opt/intel
 
+# Ignore missing build id error (generated when packaging "init" binary)
+%global _missing_build_ids_terminate_build 0
 # Remove checking for python shebang error in sgx-gdb
 %undefine __brp_mangle_shebangs
 
@@ -35,7 +36,7 @@ BuildRequires: git
 BuildRequires: fuse-devel
 BuildRequires: fuse-libs
 
-Requires: occlum-pal, occlum-runtime, occlum-toolchains-gcc, occlum-sgx-tools
+Requires: occlum-pal = %{_version}, occlum-runtime = %{_version}, occlum-sgx-tools = %{_version}, occlum-toolchains-gcc = %{_musl_version}
 
 %description
 Occlum is a memory-safe, multi-process library OS (LibOS) for Intel SGX.
