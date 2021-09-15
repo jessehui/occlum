@@ -8,26 +8,26 @@ jobs:
     runs-on: ubuntu-18.04
 
     steps:
-    - uses: actions/checkout@v1
-      with:
-        submodules: true
+#     - uses: actions/checkout@v1
+#       with:
+#         submodules: true
 
-    - name: Get occlum version
-      run: echo "OCCLUM_VERSION=$(grep 'Version =' src/pal/include/occlum_version.h | awk '{print $4}')" >> $GITHUB_ENV;
+#     - name: Get occlum version
+#       run: echo "OCCLUM_VERSION=$(grep 'Version =' src/pal/include/occlum_version.h | awk '{print $4}')" >> $GITHUB_ENV;
 
-    - name: Create container with ubuntu image
-      run: docker run -itd --privileged --name=ubuntu-debug -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
+#     - name: Create container with ubuntu image
+#       run: docker run -itd --privileged --name=ubuntu-debug -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
 
-    - name: Build dependencies
-      run:  docker exec ubuntu-debug bash -c "cd /root/occlum; make submodule"
+#     - name: Build dependencies
+#       run:  docker exec ubuntu-debug bash -c "cd /root/occlum; make submodule"
 
-    # - name: Build source
-    #   run:  docker exec ubuntu-debug bash -c "source /opt/intel/sgxsdk/environment; cd /root/occlum; SGX_MODE=SIM make"
+#     # - name: Build source
+#     #   run:  docker exec ubuntu-debug bash -c "source /opt/intel/sgxsdk/environment; cd /root/occlum; SGX_MODE=SIM make"
 
-    - name: Echo attach command
-      run: |
-        echo "After login with SSH, please execute below command to get into docker env:"
-        echo "docker exec -it ubuntu-debug bash"
+#     - name: Echo attach command
+#       run: |
+#         echo "After login with SSH, please execute below command to get into docker env:"
+#         echo "docker exec -it ubuntu-debug bash"
 
     - name: Start SSH session
       uses: luchihoratiu/debug-via-ssh@main
