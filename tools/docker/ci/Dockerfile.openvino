@@ -5,7 +5,7 @@ LABEL maintainer="Chunyang Hui <sanqian.hcy@antgroup.com>"
 ARG OCCLUM_BRANCH
 WORKDIR /root
 RUN rm -rf /root/demos && \
-    git clone -b $OCCLUM_BRANCH https://github.com/occlum/occlum.git && \
+    git clone -b $OCCLUM_BRANCH https://github.com/jessehui/occlum.git && \
     cp -r occlum/demos /root/demos && \
     rm -rf /root/occlum
 
