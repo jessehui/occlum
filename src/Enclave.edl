@@ -103,6 +103,18 @@ enclave {
          */
         public int occlum_ecall_kill(int pid, int sig);
 
+        /*
+         * Free the userspace of LibOS.
+         *
+         * Userspace VM manager is a global variable, and it will not be freed until exit.
+         * Thus, freeing the userspace VM needs a ECALL before destroying the enclave.
+         *
+         * @retval On success, return 0. On error, return -errno.
+         *
+         * The possible values of errno are
+         *      EAGAIN - The LibOS is not initialized.
+         */
+        public int occlum_ecall_free_user_space();
 
         /*
          * Broadcast interrupts to LibOS threads.

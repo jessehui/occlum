@@ -15,6 +15,7 @@ use crate::util::log::LevelFilter;
 use crate::util::mem_util::from_untrusted::*;
 use crate::util::resolv_conf_util::{parse_resolv_conf, write_resolv_conf};
 use crate::util::sgx::allow_debug as sgx_allow_debug;
+use crate::vm::USER_SPACE_VM_MANAGER;
 use sgx_tse::*;
 
 pub static mut INSTANCE_DIR: String = String::new();
@@ -174,6 +175,24 @@ pub extern "C" fn occlum_ecall_kill(pid: i32, sig: i32) -> i32 {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("failed to kill: {}", e.backtrace());
+                ecall_errno!(e.errno())
+            }
+        })
+    })
+    .unwrap_or(ecall_errno!(EFAULT))
+}
+
+#[no_mangle]
+pub extern "C" fn occlum_ecall_free_user_space() -> i32 {
+    if HAS_INIT.load(Ordering::SeqCst) == false {
+        return ecall_errno!(EAGAIN);
+    }
+
+    panic::catch_unwind(|| {
+        backtrace::__rust_begin_short_backtrace(|| match USER_SPACE_VM_MANAGER.free_user_space() {
+            Ok(_) => 0,
+            Err(e) => {
+                eprintln!("failed to free user space: {}", e.backtrace());
                 ecall_errno!(e.errno())
             }
         })

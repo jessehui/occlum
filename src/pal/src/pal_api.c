@@ -239,6 +239,18 @@ int occlum_pal_destroy(void) {
     }
 
     int ret = 0;
+    int ecall_ret = 0;
+    sgx_status_t ecall_status = occlum_ecall_free_user_space(eid, &ecall_ret);
+    if (ecall_status != SGX_SUCCESS) {
+        const char *sgx_err = pal_get_sgx_error_msg(ecall_status);
+        PAL_ERROR("Failed to do ECall with error code 0x%x: %s", ecall_status, sgx_err);
+        return -1;
+    }
+    if (ecall_ret < 0) {
+        errno = -ecall_ret;
+        PAL_ERROR("Failed to occlum_ecall_free_user_space: %s", errno2str(errno));
+        return -1;
+    }
 
     if (pal_interrupt_thread_stop() < 0) {
         ret = -1;
