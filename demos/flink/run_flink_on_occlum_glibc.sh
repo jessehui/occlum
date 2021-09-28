@@ -15,9 +15,9 @@ init_instance() {
     rm -rf occlum_instance_$postfix && mkdir occlum_instance_$postfix
     cd occlum_instance_$postfix
     occlum init
-    new_json="$(jq '.resource_limits.user_space_size = "5500MB" |
+    new_json="$(jq '.resource_limits.user_space_size = "5000MB" |
         .resource_limits.max_num_of_threads = 64 |
-        .process.default_heap_size = "128MB" |
+        .process.default_heap_size = "32MB" |
         .resource_limits.kernel_space_heap_size="64MB" |
         .process.default_mmap_size = "5000MB" |
         .entry_points = [ "/usr/lib/jvm/java-11-openjdk-amd64/bin" ] |
@@ -51,7 +51,7 @@ run_taskmanager() {
 	-D taskmanager.memory.network.min=64mb \
 	-D taskmanager.memory.managed.size=128mb \
 	-D taskmanager.cpu.cores=1.0 \
-	-D taskmanager.memory.task.heap.size=256mb \
+	-D taskmanager.memory.task.heap.size=1024mb \
     &
 }
 
