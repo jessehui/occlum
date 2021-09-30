@@ -5,7 +5,7 @@ use super::free_space_manager::VMFreeSpaceManager;
 use super::vm_area::VMArea;
 use super::vm_chunk_manager::ChunkManager;
 use super::vm_perms::VMPerms;
-use super::vm_util::{SizeType, VMMapAddr, VMMapOptions, VMMapOptionsBuilder, VMRemapOptions};
+use super::vm_util::*;
 use crate::process::ThreadRef;
 use std::ops::Bound::{Excluded, Included};
 
@@ -387,7 +387,74 @@ impl VMManager {
     }
 
     pub fn mremap(&self, options: &VMRemapOptions) -> Result<usize> {
-        return_errno!(ENOSYS, "Under development");
+        let old_addr = options.old_addr();
+        let old_size = options.old_size();
+        let old_range = VMRange::new_with_size(old_addr, old_size)?;
+        let new_size = options.new_size();
+        let size_type = VMRemapSizeType::new(&old_size, &new_size);
+
+        // Deternmine the chunk of the old range
+        let chunk = {
+            let current = current!();
+            let process_mem_chunks = current.vm().mem_chunks().read().unwrap();
+            let chunk = process_mem_chunks
+                .iter()
+                .find(|&chunk| chunk.range().is_superset_of(&old_range));
+            if chunk.is_none() {
+                return_errno!(ENOMEM, "invalid range");
+            }
+            chunk.unwrap().clone()
+        };
+
+        // Parse the mremap options to mmap options and munmap options
+        let remap_result_option = match chunk.internal() {
+            ChunkType::MultiVMA(manager) => manager
+                .lock()
+                .unwrap()
+                .chunk_manager()
+                .parse_mremap_options(options),
+            ChunkType::SingleVMA(vma) => {
+                let vma = vma.lock().unwrap();
+                self.parse_mremap_options_for_single_vma_chunk(options, &vma)
+            }
+        }?;
+
+        let ret_addr = if let Some(mmap_options) = remap_result_option.mmap_options() {
+            let mmap_addr = self.mmap(mmap_options);
+
+            // FIXME: For MRemapFlags::MayMove flag, we checked if the prefered range is free when parsing the options.
+            // But there is no lock after the checking, thus the mmap might fail. In this case, we should try mmap again.
+            if mmap_addr.is_err() && remap_result_option.may_move() == true {
+                return_errno!(
+                    EAGAIN,
+                    "There might still be a space for this mremap request"
+                );
+            }
+
+            if remap_result_option.mmap_result_addr().is_none() {
+                mmap_addr.unwrap()
+            } else {
+                remap_result_option.mmap_result_addr().unwrap()
+            }
+        } else {
+            old_addr
+        };
+
+        if let Some((munmap_addr, munmap_size)) = remap_result_option.munmap_args() {
+            self.munmap(*munmap_addr, *munmap_size)
+                .expect("Shouln't fail");
+        }
+
+        return Ok(ret_addr);
+    }
+
+    fn parse_mremap_options_for_single_vma_chunk(
+        &self,
+        options: &VMRemapOptions,
+        chunk_vma: &VMArea,
+    ) -> Result<VMRemapResult> {
+        let mut vm_manager = self.internal.lock().unwrap();
+        vm_manager.parse(options, chunk_vma)
     }
 
     // When process exit, free all owned default chunks
@@ -687,5 +754,11 @@ impl InternalVMManager {
         return self
             .free_manager
             .find_free_range_internal(size, align, addr);
+    }
+}
+
+impl VMRemapParser for InternalVMManager {
+    fn is_free_range(&self, request_range: &VMRange) -> bool {
+        self.free_manager.is_free_range(request_range)
     }
 }

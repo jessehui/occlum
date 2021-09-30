@@ -470,6 +470,7 @@ impl MMapFlags {
     }
 }
 
+// TODO: Support MREMAP_DONTUNMAP flag (since Linux 5.7)
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MRemapFlags {
     None,

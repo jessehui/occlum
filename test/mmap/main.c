@@ -24,6 +24,7 @@
 #define ALIGN_UP(x, a)          ALIGN_DOWN((x+(a-1)), (a))
 
 #define MAX_MMAP_USED_MEMORY    (4 * MB)
+#define MREMAP_SUPPORTED 1
 
 // ============================================================================
 // Helper functions
