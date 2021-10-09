@@ -64,6 +64,13 @@ impl Chunk {
         &self.internal
     }
 
+    pub fn get_vma_for_single_vma_chunk(&self) -> VMArea {
+        match self.internal() {
+            ChunkType::MultiVMA(internal_manager) => unreachable!(),
+            ChunkType::SingleVMA(vma) => return vma.lock().unwrap().clone(),
+        }
+    }
+
     pub fn free_size(&self) -> usize {
         match self.internal() {
             ChunkType::SingleVMA(vma) => 0, // for single VMA chunk, there is no free space
@@ -147,6 +154,31 @@ impl Chunk {
     pub fn is_single_vma(&self) -> bool {
         if let ChunkType::SingleVMA(_) = self.internal {
             true
+        } else {
+            false
+        }
+    }
+
+    pub fn is_single_dummy_vma(&self) -> bool {
+        if let ChunkType::SingleVMA(vma) = &self.internal {
+            vma.lock().unwrap().size() == 0
+        } else {
+            false
+        }
+    }
+
+    pub fn is_single_vma_with_conflict_size(&self) -> bool {
+        if let ChunkType::SingleVMA(vma) = &self.internal {
+            vma.lock().unwrap().size() != self.range.size()
+        } else {
+            false
+        }
+    }
+
+    pub fn is_single_vma_chunk_about_to_remove(&self) -> bool {
+        if let ChunkType::SingleVMA(vma) = &self.internal {
+            let vma_size = vma.lock().unwrap().size();
+            vma_size == 0 || vma_size != self.range.size()
         } else {
             false
         }

@@ -275,6 +275,7 @@ impl VMRemapOptions {
     }
 }
 
+#[derive(Debug)]
 pub struct VMRemapResult {
     mmap_options: Option<VMMapOptions>,
     // For RemapFlags::MayMove and size is growing case:

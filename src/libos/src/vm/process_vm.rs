@@ -1,9 +1,10 @@
 use super::*;
 
-use super::chunk::{Chunk, ChunkRef};
+use super::chunk::*;
 use super::config;
 use super::process::elf_file::{ElfFile, ProgramHeaderExt};
 use super::user_space_vm::USER_SPACE_VM_MANAGER;
+use super::vm_area::VMArea;
 use super::vm_perms::VMPerms;
 use super::vm_util::{VMInitializer, VMMapAddr, VMMapOptions, VMMapOptionsBuilder, VMRemapOptions};
 use std::collections::HashSet;
@@ -287,6 +288,86 @@ impl ProcessVM {
     pub fn replace_mem_chunk(&self, old_chunk: &ChunkRef, new_chunk: ChunkRef) {
         self.remove_mem_chunk(old_chunk);
         self.add_mem_chunk(new_chunk)
+    }
+
+    // Try merging all connecting single vmas of the process
+    // This is a very expensive operation
+    pub fn merge_all_single_vma_chunks(&self) -> Result<Vec<VMArea>> {
+        let mut mem_chunks = self.mem_chunks.write().unwrap();
+        error!("process mem chunks before merge = {:?}", *mem_chunks);
+        let mut single_vma_chunks = mem_chunks
+            .drain_filter(|chunk| chunk.is_single_vma())
+            .collect::<Vec<ChunkRef>>();
+        single_vma_chunks.sort_unstable_by(|chunk_a, chunk_b| {
+            chunk_a
+                .range()
+                .start()
+                .partial_cmp(&chunk_b.range().start())
+                .unwrap()
+        });
+        // let mut new_chunks = Vec::new();
+        for chunks in single_vma_chunks.windows(2) {
+            let chunk_a = &chunks[0];
+            let chunk_b = &chunks[1];
+            let mut vma_a = match chunk_a.internal() {
+                ChunkType::MultiVMA(_) => {
+                    unreachable!();
+                }
+                ChunkType::SingleVMA(vma) => vma.lock().unwrap(),
+            };
+
+            let mut vma_b = match chunk_b.internal() {
+                ChunkType::MultiVMA(_) => {
+                    unreachable!();
+                }
+                ChunkType::SingleVMA(vma) => vma.lock().unwrap(),
+            };
+
+            info!("vma_a = {:?}", vma_a);
+            info!("vma_b = {:?}", vma_b);
+            if VMArea::can_merge_vmas(&vma_a, &vma_b) {
+                let new_start = vma_a.start();
+                vma_b.set_start(new_start);
+                // set vma_a to zero
+                vma_a.set_end(new_start);
+                // // Record all the chunks who are enlarged
+                // new_chunks.push(vma_b.clone());
+            }
+            trace!("vma_a = {:?}, vma_b = {:?}", vma_a, vma_b);
+        }
+
+        // Remove single dummy vma chunk
+        single_vma_chunks
+            .drain_filter(|chunk| chunk.is_single_dummy_vma())
+            .collect::<Vec<ChunkRef>>();
+
+        // Get all merged chunks whose vma and range are conflict
+        let merged_chunks = single_vma_chunks
+            .drain_filter(|chunk| chunk.is_single_vma_with_conflict_size())
+            .collect::<Vec<ChunkRef>>();
+
+        // Get merged vmas
+        let mut new_vmas = Vec::new();
+        merged_chunks.iter().for_each(|chunk| {
+            let vma = chunk.get_vma_for_single_vma_chunk();
+            new_vmas.push(vma)
+        });
+
+        Ok(new_vmas)
+        // // Prepare for return value
+        // let return_new_vmas = new_vmas.clone();
+
+        // // Insert all the merged vmas back to mem_chunk
+        // while new_vmas.len() != 0 {
+        //     let vma = new_vmas.pop().unwrap();
+
+        // }
+
+        // let single_vma_chunks = single_vma_chunks.iter().collect::<HashSet<ChunkRef>>();
+
+        //     mem_chunks.extend(single_vma_chunks);
+
+        // error!("process mem chunks after merge = {:?}", *mem_chunks);
     }
 
     pub fn get_process_range(&self) -> &VMRange {

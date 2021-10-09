@@ -393,16 +393,31 @@ impl VMManager {
         let new_size = options.new_size();
         let size_type = VMRemapSizeType::new(&old_size, &new_size);
 
+        {
+            // let mut internal_manager = self.internal.lock().unwrap();
+            // internal_manager.merge_all_single_vma_chunks();
+            let current = current!();
+            let mut merged_vmas = current.vm().merge_all_single_vma_chunks()?;
+            let mut internal_manager = self.internal.lock().unwrap();
+            while merged_vmas.len() != 0 {
+                let merged_vma = merged_vmas.pop().unwrap();
+                internal_manager.add_new_chunk(&current, merged_vma);
+            }
+            internal_manager.clean_dummy_single_vma_chunks();
+        }
+
         // Deternmine the chunk of the old range
         let chunk = {
             let current = current!();
             let process_mem_chunks = current.vm().mem_chunks().read().unwrap();
+            info!("process mem chunks = {:?}", *process_mem_chunks);
             let chunk = process_mem_chunks
                 .iter()
                 .find(|&chunk| chunk.range().is_superset_of(&old_range));
             if chunk.is_none() {
                 return_errno!(ENOMEM, "invalid range");
             }
+
             chunk.unwrap().clone()
         };
 
@@ -418,6 +433,7 @@ impl VMManager {
                 self.parse_mremap_options_for_single_vma_chunk(options, &vma)
             }
         }?;
+        trace!("mremap options after parsing = {:?}", remap_result_option);
 
         let ret_addr = if let Some(mmap_options) = remap_result_option.mmap_options() {
             let mmap_addr = self.mmap(mmap_options);
@@ -754,6 +770,14 @@ impl InternalVMManager {
         return self
             .free_manager
             .find_free_range_internal(size, align, addr);
+    }
+
+    pub fn clean_dummy_single_vma_chunks(&mut self) {
+        warn!("chunks before clean: {:?}", self.chunks);
+        self.chunks
+            .drain_filter(|chunk| chunk.is_single_vma_chunk_about_to_remove())
+            .collect::<BTreeSet<Arc<Chunk>>>();
+        warn!("chunks after clean: {:?}", self.chunks);
     }
 }
 

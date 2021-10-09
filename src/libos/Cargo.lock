@@ -11,6 +11,7 @@ dependencies = [
  "derive_builder",
  "goblin",
  "intrusive-collections",
+ "itertools",
  "lazy_static",
  "log",
  "memoffset 0.6.1",
@@ -235,6 +236,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eb4ed164b4cf1c6bd6e18c097490331a0e58fbb0f39e8f6b5ac7f168006511cd"
 dependencies = [
  "memoffset 0.5.6",
+]
+
+[[package]]
+name = "itertools"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69ddb889f9d0d08a67338271fa9b62996bc788c7796a5c18cf057420aaed5eaf"
+dependencies = [
+ "either",
 ]
 
 [[package]]
