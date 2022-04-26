@@ -86,7 +86,6 @@ impl<T: ?Sized> RwLock<T> {
                 (ptr::read(inner), ptr::read(data))
             };
             mem::forget(self);
-            inner.destroy();
             drop(inner);
 
             Ok(data.into_inner())
@@ -96,13 +95,6 @@ impl<T: ?Sized> RwLock<T> {
     pub fn get_mut(&mut self) -> Result<&mut T> {
         let data = unsafe { &mut *self.data.get() };
         Ok(data)
-    }
-}
-
-// Use may_dangle to assert not to access T
-unsafe impl<#[may_dangle] T: ?Sized> Drop for RwLock<T> {
-    fn drop(&mut self) {
-        self.inner.destroy().unwrap();
     }
 }
 
