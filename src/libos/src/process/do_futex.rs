@@ -5,6 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::prelude::*;
 use crate::time::{timespec_t, ClockID};
+// Mutex implementation in src/util/sync/mutex use futex_wait/wake internally. So use SgxMutex here.
+use std::sync::SgxMutex;
 
 /// `FutexOp`, `FutexFlags`, and `futex_op_and_flags_from_u32` are helper types and
 /// functions for handling the versatile commands and arguments of futex system

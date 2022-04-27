@@ -10,7 +10,8 @@ pub use std::collections::{HashMap, VecDeque};
 pub use std::fmt::{Debug, Display};
 pub use std::prelude::v1::*;
 pub use std::sync::{
-    Arc, SgxMutex, SgxMutexGuard, SgxRwLock, SgxRwLockReadGuard, SgxRwLockWriteGuard,
+    Arc, SgxMutex as Mutex, SgxMutexGuard as MutexGuard, SgxRwLock, SgxRwLockReadGuard,
+    SgxRwLockWriteGuard,
 };
 
 // Override prelude::Result with error::Result
@@ -19,6 +20,7 @@ pub use crate::error::*;
 pub use crate::fs::{File, FileDesc, FileRef};
 pub use crate::process::{pid_t, uid_t};
 pub use crate::util::sync::RwLock;
+pub use crate::util::sync::{Mutex as SgxMutex, MutexGuard as SgxMutexGuard};
 
 macro_rules! debug_trace {
     () => {
