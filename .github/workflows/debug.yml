@@ -16,10 +16,10 @@ jobs:
       run: echo "OCCLUM_VERSION=$(grep 'Version =' src/pal/include/occlum_version.h | awk '{print $4}')" >> $GITHUB_ENV;
 
     - name: Create container with ubuntu image
-      run: docker run -itd --privileged --name=ubuntu-debug -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu18.04
+      run: docker run -itd --privileged --name=ubuntu-debug -v $GITHUB_WORKSPACE:/root/occlum occlum/occlum:${{ env.OCCLUM_VERSION }}-ubuntu20.04
 
-    - name: Build dependencies
-      run:  docker exec ubuntu-debug bash -c "cd /root/occlum; make submodule"
+#     - name: Build dependencies
+#       run:  docker exec ubuntu-debug bash -c "cd /root/occlum; make submodule"
 
     # - name: Build source
     #   run:  docker exec ubuntu-debug bash -c "source /opt/intel/sgxsdk/environment; cd /root/occlum; SGX_MODE=SIM make"
