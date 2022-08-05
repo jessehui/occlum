@@ -6,6 +6,10 @@ on: [push, pull_request]
 env:
   nap_time: 60
 
+# Cancel previous running jobs on push or pull request
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   C_cpp_rust_golang_embedded_mode_support_test:
@@ -271,18 +275,7 @@ jobs:
       run: docker exec ${{ github.job }} bash -c "cd /root/occlum/demos/pytorch; ./install_python_with_conda.sh"
 
     - name: Run pytorch test
-      run: docker exec -d ${{ github.job }} bash -c "cd /root/occlum/demos/pytorch; SGX_MODE=SIM ./run_pytorch_on_occlum.sh 2>&1 | tee /root/occlum/log"
-
-    # FIXME: PyTorch can't exit normally in SIM mode
-    - name: Kill the container
-      run: |
-        sleep 360;
-        cat "$GITHUB_WORKSPACE/log";
-        if grep -q Done "$GITHUB_WORKSPACE/log"; then
-          docker stop ${{ github.job }}
-        else
-          exit 1
-        fi
+      run: docker exec ${{ github.job }} bash -c "cd /root/occlum/demos/pytorch; SGX_MODE=SIM ./run_pytorch_on_occlum.sh"
 
 
   Tensorflow_test:
@@ -315,6 +308,10 @@ jobs:
     - name: Create container
       run: docker run -itd --name=${{ github.job }} -v $GITHUB_WORKSPACE:/root/occlum occlumbackup/occlum:latest-ubuntu20.04-grpc
 
+    - uses: ./.github/workflows/composite_action/prebuild
+      with:
+        container-name: ${{ github.job }}
+
     - name: Build dependencies
       run: docker exec ${{ github.job }} bash -c "cd /root/occlum; make submodule"
 
@@ -342,6 +339,10 @@ jobs:
 
     - name: Create container
       run: docker run -itd --name=${{ github.job }} -v $GITHUB_WORKSPACE:/root/occlum occlumbackup/occlum:latest-ubuntu20.04-grpc
+
+    - uses: ./.github/workflows/composite_action/prebuild
+      with:
+        container-name: ${{ github.job }}
 
     - name: Build dependencies
       run: docker exec ${{ github.job }} bash -c "cd /root/occlum; make submodule"
@@ -405,6 +406,10 @@ jobs:
     - name: Create container
       run: docker run -itd --name=${{ github.job }} -v $GITHUB_WORKSPACE:/root/occlum occlumbackup/occlum:latest-ubuntu20.04-openvino
 
+    - uses: ./.github/workflows/composite_action/prebuild
+      with:
+        container-name: ${{ github.job }}
+
     - name: Build dependencies
       run: docker exec ${{ github.job }} bash -c "cd /root/occlum; make submodule"
 
@@ -424,6 +429,10 @@ jobs:
         submodules: true
     - name: Create container
       run: docker run -itd --name=${{ github.job }} -v $GITHUB_WORKSPACE:/root/occlum occlumbackup/occlum:latest-ubuntu20.04-python
+
+    - uses: ./.github/workflows/composite_action/prebuild
+      with:
+        container-name: ${{ github.job }}
 
     - name: Build dependencies
       run: docker exec ${{ github.job }} bash -c "cd /root/occlum; make submodule"
@@ -664,6 +673,10 @@ jobs:
         gvisor_test=$(docker run -itd -v $GITHUB_WORKSPACE:/root/occlum occlumbackup/occlum:latest-ubuntu20.04-gvisor_test);
         echo "gvisor_test=$gvisor_test" >> $GITHUB_ENV
 
+    - uses: ./.github/workflows/composite_action/prebuild
+      with:
+        container-name: $gvisor_test
+
     - name: Build dependencies
       run: docker exec $gvisor_test bash -c "cd /root/occlum; make submodule"
 
@@ -706,6 +719,31 @@ jobs:
     - name: Test Get
       run: docker exec ${{ github.job }} bash -c "cd /root/occlum/demos/python/flask;
             curl --cacert flask.crt -X GET https://localhost:4996/customer/1"
+
+  iperf2_test:
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v1
+      with:
+        submodules: true
+
+    - uses: ./.github/workflows/composite_action/sim
+      with:
+        container-name: ${{ github.job }}
+        build-envs: 'OCCLUM_RELEASE_BUILD=1'
+
+    - name: Build iperf2
+      run: docker exec ${{ github.job }} bash -c "cd /root/occlum/demos/iperf2; SGX_MODE=SIM ./build.sh"
+
+    - name: Start iperf2 server
+      run: docker exec ${{ github.job }} bash -c "cd /root/occlum/demos/iperf2/occlum_server;
+            occlum run /bin/iperf -s -p 6888 &"
+
+    - name: Start iperf2 client
+      run: |
+        sleep ${{ 5 }};
+        docker exec ${{ github.job }} bash -c "cd /root/occlum/demos/iperf2/occlum_client;
+            occlum run /bin/iperf -c 127.0.0.1 -p 6888 -P 16"
 
   Linux_LTP_test:
     runs-on: ubuntu-20.04

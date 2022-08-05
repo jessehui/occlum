@@ -176,14 +176,8 @@ impl File for INodeFile {
 
     fn set_status_flags(&self, new_status_flags: StatusFlags) -> Result<()> {
         let mut status_flags = self.status_flags.write().unwrap();
-        // Currently, F_SETFL can change only the O_APPEND,
-        // O_ASYNC, O_NOATIME, and O_NONBLOCK flags
-        let valid_flags_mask = StatusFlags::O_APPEND
-            | StatusFlags::O_ASYNC
-            | StatusFlags::O_NOATIME
-            | StatusFlags::O_NONBLOCK;
-        status_flags.remove(valid_flags_mask);
-        status_flags.insert(new_status_flags & valid_flags_mask);
+        status_flags.remove(STATUS_FLAGS_MASK);
+        status_flags.insert(new_status_flags & STATUS_FLAGS_MASK);
         Ok(())
     }
 
@@ -272,6 +266,10 @@ impl File for INodeFile {
 }
 
 impl INodeFile {
+    pub fn inode(&self) -> &Arc<dyn INode> {
+        &self.inode
+    }
+
     pub fn open(inode: Arc<dyn INode>, abs_path: &str, flags: u32) -> Result<Self> {
         let access_mode = AccessMode::from_u32(flags)?;
         if (access_mode.readable() && !inode.allow_read()?) {

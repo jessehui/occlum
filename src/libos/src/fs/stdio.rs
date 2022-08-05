@@ -213,6 +213,34 @@ impl File for StdoutFile {
         Ok(ret)
     }
 
+    fn status_flags(&self) -> Result<StatusFlags> {
+        let ret = try_libc!(libc::ocall::fcntl_arg0(
+            self.host_fd() as i32,
+            libc::F_GETFL
+        ));
+        Ok(StatusFlags::from_bits_truncate(ret as u32))
+    }
+
+    fn set_status_flags(&self, new_status_flags: StatusFlags) -> Result<()> {
+        let raw_status_flags = (new_status_flags & STATUS_FLAGS_MASK).bits();
+        try_libc!(libc::ocall::fcntl_arg1(
+            self.host_fd() as i32,
+            libc::F_SETFL,
+            raw_status_flags as c_int
+        ));
+        Ok(())
+    }
+
+    fn seek(&self, pos: SeekFrom) -> Result<off_t> {
+        let (off, whence) = match pos {
+            SeekFrom::Start(off) => (off as off_t, 0 /* SEEK_SET */),
+            SeekFrom::Current(off) => (off as off_t, 1 /* SEEK_CUR */),
+            SeekFrom::End(off) => (off as off_t, 2 /* SEEK_END */),
+        };
+        let offset = try_libc!(libc::ocall::lseek(self.host_fd() as i32, off, whence));
+        Ok(offset)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -373,6 +401,34 @@ impl File for StdinFile {
         cmd.validate_arg_and_ret_vals(ret)?;
 
         Ok(ret)
+    }
+
+    fn status_flags(&self) -> Result<StatusFlags> {
+        let ret = try_libc!(libc::ocall::fcntl_arg0(
+            self.host_fd() as i32,
+            libc::F_GETFL
+        ));
+        Ok(StatusFlags::from_bits_truncate(ret as u32))
+    }
+
+    fn set_status_flags(&self, new_status_flags: StatusFlags) -> Result<()> {
+        let raw_status_flags = (new_status_flags & STATUS_FLAGS_MASK).bits();
+        try_libc!(libc::ocall::fcntl_arg1(
+            self.host_fd() as i32,
+            libc::F_SETFL,
+            raw_status_flags as c_int
+        ));
+        Ok(())
+    }
+
+    fn seek(&self, pos: SeekFrom) -> Result<off_t> {
+        let (off, whence) = match pos {
+            SeekFrom::Start(off) => (off as off_t, 0 /* SEEK_SET */),
+            SeekFrom::Current(off) => (off as off_t, 1 /* SEEK_CUR */),
+            SeekFrom::End(off) => (off as off_t, 2 /* SEEK_END */),
+        };
+        let offset = try_libc!(libc::ocall::lseek(self.host_fd() as i32, off, whence));
+        Ok(offset)
     }
 
     fn as_any(&self) -> &dyn Any {

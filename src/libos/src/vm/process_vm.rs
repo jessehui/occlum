@@ -7,7 +7,9 @@ use super::process::elf_file::{ElfFile, ProgramHeaderExt};
 use super::user_space_vm::USER_SPACE_VM_MANAGER;
 use super::vm_area::VMArea;
 use super::vm_perms::VMPerms;
-use super::vm_util::{VMInitializer, VMMapAddr, VMMapOptions, VMMapOptionsBuilder, VMRemapOptions};
+use super::vm_util::{
+    FileBacked, VMInitializer, VMMapAddr, VMMapOptions, VMMapOptionsBuilder, VMRemapOptions,
+};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -117,14 +119,27 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
                     .size(elf_layout.size())
                     .align(elf_layout.align())
                     .perms(VMPerms::ALL) // set it to read | write | exec for simplicity
-                    .initializer(VMInitializer::DoNothing())
-                    .build()?;
-                let (elf_range, chunk_ref) = USER_SPACE_VM_MANAGER.alloc(&vm_option)?;
+                    .initializer(VMInitializer::ElfSpecific {
+                        elf_file: elf_file.file_ref().clone(),
+                    })
+                    .build()
+                    .map_err(|e| {
+                        &self.handle_error_when_init(&chunks);
+                        e
+                    })?;
+                let (elf_range, chunk_ref) =
+                    USER_SPACE_VM_MANAGER.alloc(&vm_option).map_err(|e| {
+                        &self.handle_error_when_init(&chunks);
+                        e
+                    })?;
                 debug_assert!(elf_range.start() % elf_layout.align() == 0);
-                Self::init_elf_memory(&elf_range, elf_file)?;
+                chunks.insert(chunk_ref);
+                Self::init_elf_memory(&elf_range, elf_file).map_err(|e| {
+                    &self.handle_error_when_init(&chunks);
+                    e
+                })?;
                 trace!("elf range = {:?}", elf_range);
                 elf_ranges.push(elf_range);
-                chunks.insert(chunk_ref);
                 Ok(())
             })
             .collect::<Result<()>>()?;
@@ -135,8 +150,16 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
             .size(heap_layout.size())
             .align(heap_layout.align())
             .perms(VMPerms::READ | VMPerms::WRITE)
-            .build()?;
-        let (heap_range, chunk_ref) = USER_SPACE_VM_MANAGER.alloc(&vm_option)?;
+            .build()
+            .map_err(|e| {
+                &self.handle_error_when_init(&chunks);
+                e
+            })?;
+
+        let (heap_range, chunk_ref) = USER_SPACE_VM_MANAGER.alloc(&vm_option).map_err(|e| {
+            &self.handle_error_when_init(&chunks);
+            e
+        })?;
         debug_assert!(heap_range.start() % heap_layout.align() == 0);
         trace!("heap range = {:?}", heap_range);
         let brk = AtomicUsize::new(heap_range.start());
@@ -148,8 +171,15 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
             .size(stack_layout.size())
             .align(heap_layout.align())
             .perms(VMPerms::READ | VMPerms::WRITE)
-            .build()?;
-        let (stack_range, chunk_ref) = USER_SPACE_VM_MANAGER.alloc(&vm_option)?;
+            .build()
+            .map_err(|e| {
+                &self.handle_error_when_init(&chunks);
+                e
+            })?;
+        let (stack_range, chunk_ref) = USER_SPACE_VM_MANAGER.alloc(&vm_option).map_err(|e| {
+            &self.handle_error_when_init(&chunks);
+            e
+        })?;
         debug_assert!(stack_range.start() % stack_layout.align() == 0);
         chunks.insert(chunk_ref);
         trace!("stack range = {:?}", stack_range);
@@ -177,6 +207,12 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
         validate_size(self.stack_size)?;
         validate_size(self.mmap_size)?;
         Ok(())
+    }
+
+    fn handle_error_when_init(&self, chunks: &HashSet<Arc<Chunk>>) {
+        chunks.iter().for_each(|chunk| {
+            USER_SPACE_VM_MANAGER.internal().munmap_chunk(chunk, None);
+        });
     }
 
     fn init_elf_memory(elf_range: &VMRange, elf_file: &ElfFile) -> Result<()> {
@@ -212,7 +248,7 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
                 }
 
                 // Bytes of file_size length are loaded from the ELF file
-                elf_file.file_inode().read_at(
+                elf_file.file_ref().read_at(
                     file_offset,
                     &mut elf_proc_buf[mem_start_offset..mem_start_offset + file_size],
                 );
@@ -286,6 +322,14 @@ impl ProcessVM {
         &self.mem_chunks
     }
 
+    pub fn stack_range(&self) -> &VMRange {
+        &self.stack_range
+    }
+
+    pub fn heap_range(&self) -> &VMRange {
+        &self.heap_range
+    }
+
     pub fn add_mem_chunk(&self, chunk: ChunkRef) {
         let mut mem_chunks = self.mem_chunks.write().unwrap();
         mem_chunks.insert(chunk);
@@ -317,7 +361,7 @@ impl ProcessVM {
                 .unwrap()
         });
 
-        // Try merging connecting VMAs
+        // Try merging connecting single VMA chunks
         for chunks in single_vma_chunks.windows(2) {
             let chunk_a = &chunks[0];
             let chunk_b = &chunks[1];
@@ -343,36 +387,28 @@ impl ProcessVM {
             }
         }
 
-        // Remove single dummy VMA chunk
-        single_vma_chunks
-            .drain_filter(|chunk| chunk.is_single_dummy_vma())
-            .collect::<Vec<ChunkRef>>();
+        // Collect merged vmas which will be the output of this function
+        let mut merged_vmas = Vec::new();
 
-        // Get all merged chunks whose vma and range are conflict
-        let merged_chunks = single_vma_chunks
-            .drain_filter(|chunk| chunk.is_single_vma_with_conflict_size())
-            .collect::<Vec<ChunkRef>>();
+        // Insert the merged chunks or unchanged chunks back to mem_chunk list
+        for chunk in single_vma_chunks.into_iter().filter_map(|chunk| {
+            if !chunk.is_single_dummy_vma() {
+                if chunk.is_single_vma_with_conflict_size() {
+                    let new_vma = chunk.get_vma_for_single_vma_chunk();
+                    merged_vmas.push(new_vma.clone());
 
-        // Get merged vmas
-        let mut new_vmas = Vec::new();
-        merged_chunks.iter().for_each(|chunk| {
-            let vma = chunk.get_vma_for_single_vma_chunk();
-            new_vmas.push(vma)
-        });
-
-        // Add all merged vmas back to mem_chunk list of the process
-        new_vmas.iter().for_each(|vma| {
-            let chunk = Arc::new(Chunk::new_chunk_with_vma(vma.clone()));
-            mem_chunks.insert(chunk);
-        });
-
-        // Add all unchanged single vma chunks back to mem_chunk list
-        while single_vma_chunks.len() > 0 {
-            let chunk = single_vma_chunks.pop().unwrap();
+                    Some(Arc::new(Chunk::new_chunk_with_vma(new_vma)))
+                } else {
+                    Some(chunk)
+                }
+            } else {
+                None
+            }
+        }) {
             mem_chunks.insert(chunk);
         }
 
-        Ok(new_vmas)
+        Ok(merged_vmas)
     }
 
     pub fn get_process_range(&self) -> &VMRange {
@@ -464,28 +500,22 @@ impl ProcessVM {
                 VMInitializer::DoNothing()
             } else {
                 let file_ref = current!().file(fd)?;
-                VMInitializer::LoadFromFile {
-                    file: file_ref,
-                    offset: offset,
+                // Only shared, file-backed memory mappings have write-back files
+                let need_write_back = if flags.contains(MMapFlags::MAP_SHARED) {
+                    true
+                } else {
+                    false
+                };
+                VMInitializer::FileBacked {
+                    file: FileBacked::new(file_ref, offset, need_write_back),
                 }
             }
-        };
-        // Only shared, file-backed memory mappings have write-back files
-        let writeback_file = if flags.contains(MMapFlags::MAP_SHARED) {
-            if let VMInitializer::LoadFromFile { file, offset } = &initializer {
-                Some((file.clone(), *offset))
-            } else {
-                None
-            }
-        } else {
-            None
         };
         let mmap_options = VMMapOptionsBuilder::default()
             .size(size)
             .addr(addr_option)
             .perms(perms)
             .initializer(initializer)
-            .writeback_file(writeback_file)
             .build()?;
         let mmap_addr = USER_SPACE_VM_MANAGER.mmap(&mmap_options)?;
         Ok(mmap_addr)

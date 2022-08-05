@@ -184,7 +184,11 @@ impl VMManager {
                         "mmap with addr in existing default chunk: {:?}",
                         chunk.range()
                     );
-                    return chunk_internal.lock().unwrap().chunk_manager().mmap(options);
+                    return chunk_internal
+                        .lock()
+                        .unwrap()
+                        .chunk_manager_mut()
+                        .mmap(options);
                 }
                 ChunkType::SingleVMA(_) => {
                     match addr {
@@ -287,7 +291,7 @@ impl VMManager {
                         ChunkType::MultiVMA(manager) => manager
                             .lock()
                             .unwrap()
-                            .chunk_manager()
+                            .chunk_manager_mut()
                             .munmap_range(munmap_range)?,
                     }
                 }
@@ -307,7 +311,7 @@ impl VMManager {
                 return manager
                     .lock()
                     .unwrap()
-                    .chunk_manager()
+                    .chunk_manager_mut()
                     .munmap_range(munmap_range);
             }
             ChunkType::SingleVMA(_) => {
@@ -353,7 +357,7 @@ impl VMManager {
                 return manager
                     .lock()
                     .unwrap()
-                    .chunk_manager()
+                    .chunk_manager_mut()
                     .mprotect(addr, size, perms);
             }
             ChunkType::SingleVMA(_) => {
@@ -383,7 +387,7 @@ impl VMManager {
                 return manager
                     .lock()
                     .unwrap()
-                    .chunk_manager()
+                    .chunk_manager_mut()
                     .msync_by_range(&sync_range);
             }
             ChunkType::SingleVMA(vma) => {
@@ -405,7 +409,7 @@ impl VMManager {
                     manager
                         .lock()
                         .unwrap()
-                        .chunk_manager()
+                        .chunk_manager_mut()
                         .msync_by_file(sync_file);
                 }
                 ChunkType::SingleVMA(vma) => {
@@ -424,8 +428,9 @@ impl VMManager {
 
         // Try merging all connecting chunks
         {
-            let mut merged_vmas = current.vm().merge_all_single_vma_chunks()?;
+            // Must lock the internal manager first here in case the chunk's range and vma are conflict when other threads are operating the VM
             let mut internal_manager = self.internal.lock().unwrap();
+            let mut merged_vmas = current.vm().merge_all_single_vma_chunks()?;
             while merged_vmas.len() != 0 {
                 let merged_vma = merged_vmas.pop().unwrap();
                 internal_manager.add_new_chunk(&current, merged_vma);
@@ -451,7 +456,7 @@ impl VMManager {
             ChunkType::MultiVMA(manager) => manager
                 .lock()
                 .unwrap()
-                .chunk_manager()
+                .chunk_manager_mut()
                 .parse_mremap_options(options),
             ChunkType::SingleVMA(vma) => {
                 self.parse_mremap_options_for_single_vma_chunk(options, vma)

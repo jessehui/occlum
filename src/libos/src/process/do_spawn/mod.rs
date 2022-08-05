@@ -14,6 +14,7 @@ use crate::fs::{
 };
 use crate::prelude::*;
 use crate::process::pgrp::{get_spawn_attribute_pgrp, update_pgrp_for_new_process};
+use crate::util::pku_util;
 use crate::vm::ProcessVM;
 
 mod aux_vec;
@@ -165,7 +166,7 @@ fn new_process_common(
     parent_process: Option<ProcessRef>,
 ) -> Result<ProcessRef> {
     let mut argv = argv.clone().to_vec();
-    let (is_script, elf_inode, mut elf_buf, elf_header) =
+    let (is_script, elf_file, mut elf_buf, elf_header) =
         load_exec_file_hdr_to_vec(file_path, current_ref)?;
 
     // elf_path might be different from file_path because file_path could lead to a script text file.
@@ -181,13 +182,13 @@ fn new_process_common(
         file_path.to_string()
     };
 
-    let exec_elf_hdr = ElfFile::new(&elf_inode, &mut elf_buf, elf_header)
+    let exec_elf_hdr = ElfFile::new(&elf_file, &mut elf_buf, elf_header)
         .cause_err(|e| errno!(e.errno(), "invalid executable"))?;
     let ldso_path = exec_elf_hdr
         .elf_interpreter()
         .ok_or_else(|| errno!(EINVAL, "cannot find the interpreter segment"))?;
     trace!("ldso_path = {:?}", ldso_path);
-    let (ldso_inode, mut ldso_elf_hdr_buf, ldso_elf_header) =
+    let (ldso_file, mut ldso_elf_hdr_buf, ldso_elf_header) =
         load_file_hdr_to_vec(ldso_path, current_ref)
             .cause_err(|e| errno!(e.errno(), "cannot load ld.so"))?;
     let ldso_elf_header = if ldso_elf_header.is_none() {
@@ -195,7 +196,7 @@ fn new_process_common(
     } else {
         ldso_elf_header.unwrap()
     };
-    let ldso_elf_hdr = ElfFile::new(&ldso_inode, &mut ldso_elf_hdr_buf, ldso_elf_header)
+    let ldso_elf_hdr = ElfFile::new(&ldso_file, &mut ldso_elf_hdr_buf, ldso_elf_header)
         .cause_err(|e| errno!(e.errno(), "invalid ld.so"))?;
 
     let new_process_ref = {
@@ -447,7 +448,11 @@ fn init_auxvec(process_vm: &ProcessVM, exec_elf_file: &ElfFile) -> Result<AuxVec
     let ldso_elf_base = process_vm.get_elf_ranges()[1].start() as u64;
     auxvec.set(AuxKey::AT_BASE, ldso_elf_base)?;
 
-    let syscall_addr = __occlum_syscall_linux_abi as *const () as u64;
+    let syscall_addr = if pku_util::check_pku_enabled() {
+        __occlum_syscall_linux_pku_abi
+    } else {
+        __occlum_syscall_linux_abi
+    } as *const () as u64;
     auxvec.set(AuxKey::AT_OCCLUM_ENTRY, syscall_addr)?;
     // TODO: init AT_EXECFN
     // auxvec.set_val(AuxKey::AT_EXECFN, "program_name")?;
@@ -457,5 +462,6 @@ fn init_auxvec(process_vm: &ProcessVM, exec_elf_file: &ElfFile) -> Result<AuxVec
 
 extern "C" {
     fn __occlum_syscall_linux_abi() -> i64;
+    fn __occlum_syscall_linux_pku_abi() -> i64;
     fn occlum_gdb_hook_load_elf(elf_base: u64, elf_path: *const u8, elf_path_len: u64);
 }
