@@ -47,6 +47,7 @@ impl Drop for ThreadId {
 
 lazy_static! {
     static ref THREAD_ID_ALLOC: SgxMutex<IdAlloc> = SgxMutex::new(IdAlloc::new());
+    pub static ref FILE_ID_ALLOC: SgxMutex<IdAlloc> = SgxMutex::new(IdAlloc::new_with_value());
 }
 
 /// PID/TID allocator.
@@ -60,7 +61,7 @@ lazy_static! {
 ///
 /// Note that PID/TID 0 is reserved for the idle process. So the id allocator starts from 1.
 #[derive(Debug, Clone)]
-struct IdAlloc {
+pub struct IdAlloc {
     next_id: u32,
     used_ids: HashSet<u32>,
 }
@@ -69,6 +70,14 @@ impl IdAlloc {
     pub fn new() -> Self {
         Self {
             next_id: 0,
+            used_ids: HashSet::new(),
+        }
+    }
+
+    pub fn new_with_value() -> Self {
+        let magic_id = 0xfedcba;
+        Self {
+            next_id: magic_id,
             used_ids: HashSet::new(),
         }
     }

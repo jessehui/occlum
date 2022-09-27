@@ -14,7 +14,7 @@ use crate::signal::{SigQueues, SigSet, SigStack};
 use crate::time::ThreadProfiler;
 
 pub use self::builder::ThreadBuilder;
-pub use self::id::ThreadId;
+pub use self::id::{ThreadId, FILE_ID_ALLOC};
 pub use self::name::ThreadName;
 
 mod builder;
@@ -55,6 +55,7 @@ pub enum ThreadStatus {
     Init,
     Running,
     Exited,
+    Stopped,
 }
 
 impl Thread {
@@ -266,6 +267,20 @@ impl Thread {
     pub(super) fn inner(&self) -> SgxMutexGuard<ThreadInner> {
         self.inner.lock().unwrap()
     }
+
+    pub fn force_stop(&self) {
+        let mut inner = self.inner();
+        inner.stop();
+    }
+
+    pub fn is_forced_to_stop(&self) -> bool {
+        self.inner().status() == ThreadStatus::Stopped
+    }
+
+    pub fn resume(&self) {
+        let mut inner = self.inner();
+        inner.resume();
+    }
 }
 
 impl PartialEq for Thread {
@@ -302,6 +317,7 @@ pub enum ThreadInner {
     Init,
     Running,
     Exited { term_status: TermStatus },
+    Stopped,
 }
 
 impl ThreadInner {
@@ -314,6 +330,7 @@ impl ThreadInner {
             Self::Init { .. } => ThreadStatus::Init,
             Self::Running { .. } => ThreadStatus::Running,
             Self::Exited { .. } => ThreadStatus::Exited,
+            Self::Stopped { .. } => ThreadStatus::Stopped,
         }
     }
 
@@ -326,6 +343,16 @@ impl ThreadInner {
 
     pub fn start(&mut self) {
         debug_assert!(self.status() == ThreadStatus::Init);
+        *self = Self::Running;
+    }
+
+    pub fn stop(&mut self) {
+        debug_assert!(self.status() == ThreadStatus::Running);
+        *self = Self::Stopped;
+    }
+
+    pub fn resume(&mut self) {
+        debug_assert!(self.status() == ThreadStatus::Stopped);
         *self = Self::Running;
     }
 

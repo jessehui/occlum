@@ -37,10 +37,12 @@ pub struct PipeReader {
 
 impl File for PipeReader {
     fn read(&self, buf: &mut [u8]) -> Result<usize> {
+        info!("pipe read channel uid = {:?}", self.consumer.uid());
         self.consumer.pop_slice(buf)
     }
 
     fn readv(&self, bufs: &mut [&mut [u8]]) -> Result<usize> {
+        info!("pipe readv channel uid = {:?}", self.consumer.uid());
         self.consumer.pop_slices(bufs)
     }
 
@@ -135,10 +137,12 @@ pub struct PipeWriter {
 
 impl File for PipeWriter {
     fn write(&self, buf: &[u8]) -> Result<usize> {
+        info!("pipe write channel uid = {:?}", self.producer.uid());
         self.producer.push_slice(buf)
     }
 
     fn writev(&self, bufs: &[&[u8]]) -> Result<usize> {
+        info!("pipe writev channel uid = {:?}", self.producer.uid());
         self.producer.push_slices(bufs)
     }
 

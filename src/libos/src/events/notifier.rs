@@ -11,10 +11,30 @@ pub struct Notifier<E: Event, F: EventFilter<E> = DummyEventFilter<E>> {
     subscribers: SgxMutex<VecDeque<Subscriber<E, F>>>,
 }
 
+impl<E: Event, F: EventFilter<E>> Clone for Notifier<E, F> {
+    fn clone(&self) -> Self {
+        let subscribers = self.subscribers.lock().unwrap();
+        let new_subscribers = (*subscribers).clone();
+        Self {
+            subscribers: SgxMutex::new(new_subscribers),
+        }
+    }
+}
+
 struct Subscriber<E: Event, F: EventFilter<E>> {
     observer: Weak<dyn Observer<E>>,
     filter: Option<F>,
     metadata: Option<Weak<dyn Any + Send + Sync>>,
+}
+
+impl<E: Event, F: EventFilter<E>> Clone for Subscriber<E, F> {
+    fn clone(&self) -> Self {
+        Self {
+            observer: self.observer.clone(),
+            filter: self.filter.clone(),
+            metadata: self.metadata.clone(),
+        }
+    }
 }
 
 impl<E: Event, F: EventFilter<E>> Notifier<E, F> {
@@ -48,18 +68,21 @@ impl<E: Event, F: EventFilter<E>> Notifier<E, F> {
     /// Broadcast an event to all registered observers.
     pub fn broadcast(&self, event: &E) {
         let subscribers = self.subscribers.lock().unwrap();
+        info!("subscribers number = {:?}", subscribers.len());
         for subscriber in subscribers.iter() {
             if let Some(filter) = subscriber.filter.as_ref() {
                 if !filter.filter(event) {
                     continue;
                 }
             }
+            info!("broadcast event 1");
             let observer = match subscriber.observer.upgrade() {
                 // TODO: should remove subscribers whose observers have been freed
                 None => return,
                 Some(observer) => observer,
             };
 
+            info!("broadcast event");
             observer.on_event(event, &subscriber.metadata);
         }
     }
@@ -71,6 +94,7 @@ impl<E: Event, F: EventFilter<E>> fmt::Debug for Notifier<E, F> {
     }
 }
 
+#[derive(Clone)]
 pub struct DummyEventFilter<E> {
     phantom: PhantomData<E>,
 }

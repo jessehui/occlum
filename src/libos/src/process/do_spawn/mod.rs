@@ -359,7 +359,7 @@ fn init_files(
     let should_inherit_file_table = current_ref.process().pid() > 0;
     if should_inherit_file_table {
         // Fork: clone file table
-        let mut cloned_file_table = current_ref.files().lock().unwrap().clone();
+        let mut cloned_file_table = current_ref.files().lock().unwrap().clone_same();
 
         // By default, file descriptors remain open across an execve().
         // File descriptors that are marked close-on-exec are closed, which will cause

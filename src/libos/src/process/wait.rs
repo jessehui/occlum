@@ -114,7 +114,7 @@ where
     }
 }
 
-fn wait_event(thread: *const c_void) {
+pub fn wait_event(thread: *const c_void) {
     let mut ret: c_int = 0;
     let mut sgx_ret: c_int = 0;
     unsafe {

@@ -208,17 +208,35 @@ impl FileTable {
         let del_event = FileTableEvent::Del(fd);
         self.notifier.broadcast(&del_event);
     }
-}
 
-impl Clone for FileTable {
-    fn clone(&self) -> Self {
+    pub fn wake_once(&self) {
+        self.table.iter().for_each(|file| {
+            if let Some(file_entry) = file {
+                if let Some(notifier) = file_entry.file.notifier() {
+                    notifier.broadcast(&(IoEvents::IN | IoEvents::OUT))
+                }
+            }
+        })
+    }
+
+    pub fn clone_same(&self) -> Self {
         FileTable {
             table: self.table.clone(),
             num_fds: self.num_fds,
-            notifier: FileTableNotifier::new(),
+            notifier: self.notifier.clone(),
         }
     }
 }
+
+// impl Clone for FileTable {
+//     fn clone(&self) -> Self {
+//         FileTable {
+//             table: self.table.clone(),
+//             num_fds: self.num_fds,
+//             notifier: FileTableNotifier::new(),
+//         }
+//     }
+// }
 
 impl Default for FileTable {
     fn default() -> Self {
@@ -229,6 +247,7 @@ impl Default for FileTable {
 #[derive(Debug, Clone, Copy)]
 pub enum FileTableEvent {
     Del(FileDesc),
+    Wake,
 }
 
 impl Event for FileTableEvent {}

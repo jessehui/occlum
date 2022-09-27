@@ -156,6 +156,15 @@ impl Process {
         self.forced_exit_status.is_forced_to_exit()
     }
 
+    pub fn is_forced_to_stop(&self) -> bool {
+        self.inner().status() == ProcessStatus::Stopped
+    }
+
+    pub fn force_stop(&self) {
+        let mut inner = self.inner();
+        inner.force_stop();
+    }
+
     /// Force a process to exit.
     ///
     /// There are two reasons to force a process to exit:
@@ -202,6 +211,14 @@ impl ProcessInner {
             Self::Live { status, .. } => (*status).into(),
             Self::Zombie { .. } => ProcessStatus::Zombie,
         }
+    }
+
+    pub fn force_stop(&mut self) {
+        match self {
+            Self::Live { mut status, .. } => status = LiveStatus::Stopped,
+            Self::Zombie { .. } => {}
+        }
+        info!("force stop self = {:?}", self);
     }
 
     pub fn children(&self) -> Option<&Vec<ProcessRef>> {

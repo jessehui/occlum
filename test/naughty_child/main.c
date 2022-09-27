@@ -223,6 +223,18 @@ int test_vfork_child() {
     return 0;
 }
 
+// int test_vfork_child() {
+//     int pipe_reader_fd = atoi(g_argv[3]);
+//     int pipe_writer_fd = atoi(g_argv[4]);
+//     char buf[30] = {0};
+//     struct stat stat_buf;
+
+//     int ret = read(pipe_reader_fd, buf, sizeof(buf));
+//     if (ret < 0) {
+//         THROW_ERROR("[child] read from pipe error");
+//     }
+// }
+
 // ============================================================================
 // Test suite
 // ============================================================================

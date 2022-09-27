@@ -475,8 +475,14 @@ impl Observer<IoEvents> for EpollFile {
 
 impl Observer<FileTableEvent> for EpollFile {
     fn on_event(&self, event: &FileTableEvent, _metadata: &Option<Weak<dyn Any + Send + Sync>>) {
-        let FileTableEvent::Del(fd) = event;
-        let _ = self.del_interest(*fd);
+        // let FileTableEvent::Del(fd) = event;
+        // let _ = self.del_interest(*fd);
+        match event {
+            FileTableEvent::Del(fd) => {
+                let _ = self.del_interest(*fd);
+            }
+            FileTableEvent::Wake => {}
+        }
     }
 }
 

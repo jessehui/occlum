@@ -89,10 +89,42 @@ parent_exit:
     exit(1);
 }
 
+// int test_vfork_file_event() {
+//     int pipe_fds[2];
+//     if (pipe(pipe_fds) < 0) {
+//         THROW_ERROR("failed to create a pipe");
+//     }
+
+//     if(dup2(pipe_fds[0], 0) < 0) {
+//         THROW_ERROR("failed to dup2");
+//     }
+
+//     pid_t child_pid = vfork();
+//     if (child_pid == 0) {
+//         close(pipe_fds[1]); // close write end
+//         char **child_argv = calloc(1,
+//                                    sizeof(char *) * (5 + 1)); // naughty_child -t vfork reader_fd writer_fd
+//         child_argv[0] = "naughty_child";
+//         child_argv[1] = "-t";
+//         child_argv[2] = "vfork";
+//         if (asprintf(&child_argv[3], "%d", pipe_fds[0]) < 0 ||
+//                 asprintf(&child_argv[4], "%d", pipe_fds[1]) < 0) {
+//             THROW_ERROR("failed to asprintf");
+//         }
+
+//         int ret = execve("/bin/naughty_child", child_argv, NULL);
+//         if (ret != 0) {
+//             printf("child process execve error\n");
+//         }
+//         _exit(1);
+//     } else {
+// }
+
 static test_case_t test_cases[] = {
     TEST_CASE(test_vfork_exit),
     TEST_CASE(test_multiple_vfork_execve),
     TEST_CASE(test_vfork_isolate_file_table),
+    // TEST_CASE(test_vfork_file_event),
 };
 
 int main() {

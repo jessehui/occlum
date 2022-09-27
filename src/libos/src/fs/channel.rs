@@ -6,23 +6,47 @@ use ringbuf::{Consumer as RbConsumer, Producer as RbProducer, RingBuffer};
 use super::{IoEvents, IoNotifier};
 use crate::events::{Event, EventFilter, Notifier, Observer, Waiter, WaiterQueueObserver};
 use crate::prelude::*;
+use crate::process::FILE_ID_ALLOC;
 
+#[derive(Debug)]
+struct ChannelID {
+    inner: u32,
+}
+
+impl ChannelID {
+    /// Create a new thread ID.
+    ///
+    /// The thread ID returned is guaranteed to have a value greater than zero.
+    pub fn new() -> Self {
+        let mut alloc = FILE_ID_ALLOC.lock().unwrap();
+        let inner = alloc.alloc();
+        Self { inner }
+    }
+
+    /// Return the value of the thread ID.
+    pub fn as_u32(&self) -> u32 {
+        self.inner
+    }
+}
 /// A unidirectional communication channel, intended to implement IPC, e.g., pipe,
 /// unix domain sockets, etc.
 pub struct Channel<I> {
     producer: Producer<I>,
     consumer: Consumer<I>,
+    uid: ChannelID,
 }
 
 impl<I> Channel<I> {
     /// Create a new channel.
     pub fn new(capacity: usize) -> Result<Self> {
         let state = Arc::new(State::new());
+        let uid = ChannelID::new();
+        info!("channel uid = {:?}", uid);
 
         let rb = RingBuffer::new(capacity);
         let (rb_producer, rb_consumer) = rb.split();
-        let mut producer = Producer::new(rb_producer, state.clone());
-        let mut consumer = Consumer::new(rb_consumer, state.clone());
+        let mut producer = Producer::new(rb_producer, state.clone(), uid.as_u32());
+        let mut consumer = Consumer::new(rb_consumer, state.clone(), uid.as_u32());
 
         // The events on an endpoint is not triggered by itself, but its peer.
         // For example, a producer becomes writable (IoEvents::OUT) only if
@@ -43,7 +67,11 @@ impl<I> Channel<I> {
             None,
         );
 
-        Ok(Self { producer, consumer })
+        Ok(Self {
+            producer,
+            consumer,
+            uid,
+        })
     }
 
     /// Push an item into the channel.
@@ -73,7 +101,11 @@ impl<I> Channel<I> {
 
     /// Turn the channel into a pair of producer and consumer.
     pub fn split(self) -> (Producer<I>, Consumer<I>) {
-        let Channel { producer, consumer } = self;
+        let Channel {
+            producer,
+            consumer,
+            uid,
+        } = self;
         (producer, consumer)
     }
 
@@ -130,10 +162,11 @@ macro_rules! impl_end_point_type {
             notifier: Arc<IoNotifier>,
             peer_notifier: Weak<IoNotifier>,
             is_nonblocking: AtomicBool,
+            channel_id: u32,
         }
 
         impl<$i> $end_point<$i> {
-            fn new(inner: $inner<$i>, state: Arc<State>) -> Self {
+            fn new(inner: $inner<$i>, state: Arc<State>, channel_id: u32) -> Self {
                 let inner = SgxMutex::new(inner);
                 let observer = WaiterQueueObserver::new();
                 let notifier = Arc::new(IoNotifier::new());
@@ -146,6 +179,7 @@ macro_rules! impl_end_point_type {
                     notifier,
                     peer_notifier,
                     is_nonblocking,
+                    channel_id,
                 }
             }
 
@@ -172,6 +206,10 @@ macro_rules! impl_end_point_type {
                     // Wake all threads that are blocked on pushing/popping this endpoint
                     self.observer.waiter_queue().dequeue_and_wake_all();
                 }
+            }
+
+            pub fn uid(&self) -> u32 {
+                self.channel_id
             }
 
             fn trigger_peer_events(&self, events: &IoEvents) {
@@ -204,7 +242,9 @@ macro_rules! waiter_loop {
                 $loop_body
             }
 
+            warn!("waiter loop wait ...");
             waiter.wait(None)?;
+            warn!("waiter loop wait done");
         }
     };
 }
@@ -316,6 +356,7 @@ impl<I: Copy> Producer<I> {
 
                 if total_count > 0 {
                     drop(rb_producer);
+                    info!("write trigger_peer_events: IN");
                     self.trigger_peer_events(&IoEvents::IN);
                     return Ok(total_count);
                 }
@@ -459,6 +500,7 @@ impl<I: Copy> Consumer<I> {
                     }
                 }
 
+                info!("pop_slices total_count = {:?}", total_count);
                 if total_count > 0 {
                     drop(rb_consumer);
                     self.trigger_peer_events(&IoEvents::OUT);

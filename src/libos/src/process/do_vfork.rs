@@ -1,5 +1,6 @@
 use super::{ProcessRef, ThreadId, ThreadRef};
 use crate::fs::FileTable;
+use crate::interrupt::broadcast_interrupts;
 use crate::prelude::*;
 use crate::syscall::CpuContext;
 use std::collections::HashMap;
@@ -21,6 +22,7 @@ lazy_static! {
     // Store all the parents's file tables who call vfork. It will be recovered when the child exits or has its own task.
     // K: parent pid, V: parent file table
     static ref VFORK_PARENT_FILE_TABLES: SgxMutex<HashMap<pid_t, FileTable>> = SgxMutex::new(HashMap::new());
+    static ref VFORK_SLEEP_THREADS: SgxMutex<Vec<usize>> = SgxMutex::new(Vec::new());
 }
 
 thread_local! {
@@ -38,6 +40,17 @@ pub fn do_vfork(mut context: *mut CpuContext) -> Result<isize> {
         new_tid.as_u32() as pid_t
     };
 
+    // stop all other child threads
+    let child_threads = current.process().threads();
+    child_threads.iter().for_each(|thread| {
+        if thread.tid() != current.tid() {
+            thread.force_stop();
+        }
+    });
+
+    // Don't hesitate. Interrupt all threads right now (except the calling thread).
+    broadcast_interrupts();
+
     // Save parent's context in TLS
     VFORK_CONTEXT.with(|cell| {
         let mut ctx = cell.borrow_mut();
@@ -50,10 +63,11 @@ pub fn do_vfork(mut context: *mut CpuContext) -> Result<isize> {
     let mut vfork_file_tables = VFORK_PARENT_FILE_TABLES.lock().unwrap();
     let parent_file_table = {
         let mut current_file_table = current.files().lock().unwrap();
-        let new_file_table = current_file_table.clone();
-        // FileTable contains non-cloned struct, so here we do a memory replacement to use new
-        // file table in child and store the original file table in TLS.
-        mem::replace(&mut *current_file_table, new_file_table)
+        let new_file_table = current_file_table.clone_same();
+        // // FileTable contains non-cloned struct, so here we do a memory replacement to use new
+        // // file table in child and store the original file table in TLS.
+        // mem::replace(&mut *current_file_table, new_file_table)
+        new_file_table
     };
     if let Some(_) = vfork_file_tables.insert(parent_pid, parent_file_table) {
         return_errno!(EINVAL, "current process's vfork has not returned yet");
@@ -78,7 +92,25 @@ pub fn vfork_return_to_parent(
     mut context: *mut CpuContext,
     current_ref: &ThreadRef,
 ) -> Result<isize> {
-    return restore_parent_process(context, current_ref);
+    let child_pid = restore_parent_process(context, current_ref)?;
+
+    // Wake parent's child thread which are all sleeping
+    let current = current!();
+    let children = current.process().threads();
+    children.iter().for_each(|thread| {
+        thread.resume();
+    });
+
+    let mut sleep_threads = VFORK_SLEEP_THREADS.lock().unwrap();
+
+    sleep_threads.iter().for_each(|&thread_ptr| {
+        info!("wake thread id = {:?}", thread_ptr);
+        set_event(thread_ptr as *const c_void);
+    });
+
+    sleep_threads.clear();
+
+    Ok(child_pid)
 }
 
 fn restore_parent_process(mut context: *mut CpuContext, current_ref: &ThreadRef) -> Result<isize> {
@@ -109,6 +141,9 @@ fn restore_parent_process(mut context: *mut CpuContext, current_ref: &ThreadRef)
         unsafe { *context = ctx.unwrap().1 };
         *ctx = None;
     });
+
+    info!("vfork_return_to_parent");
+    current_file_table.wake_once();
 
     // Set return value to child_pid
     // This will be the second time return
@@ -155,4 +190,60 @@ fn close_files_opened_by_child(current: &ThreadRef, parent_file_table: &FileTabl
         .iter()
         .for_each(|&fd| current.close_file(fd).expect("close child file error"));
     Ok(())
+}
+
+pub fn handle_force_stop() {
+    if current!().is_forced_to_stop() {
+        let current = unsafe { sgx_thread_get_self() };
+        warn!("wait event id = {:?}", current as usize);
+        VFORK_SLEEP_THREADS.lock().unwrap().push(current as usize);
+        wait_event(current)
+    }
+}
+
+pub fn wait_event(thread: *const c_void) {
+    let mut ret: c_int = 0;
+    let mut sgx_ret: c_int = 0;
+    unsafe {
+        sgx_ret = sgx_thread_wait_untrusted_event_ocall(&mut ret as *mut c_int, thread);
+    }
+    if ret != 0 || sgx_ret != 0 {
+        panic!("ERROR: OCall failed!");
+    }
+}
+
+pub fn set_event(thread: *const c_void) {
+    let mut ret: c_int = 0;
+    let mut sgx_ret: c_int = 0;
+    unsafe {
+        sgx_ret = sgx_thread_set_untrusted_event_ocall(&mut ret as *mut c_int, thread);
+    }
+    if ret != 0 || sgx_ret != 0 {
+        panic!("ERROR: OCall failed!");
+    }
+}
+
+extern "C" {
+    fn sgx_thread_get_self() -> *const c_void;
+
+    /* Go outside and wait on my untrusted event */
+    fn sgx_thread_wait_untrusted_event_ocall(ret: *mut c_int, self_thread: *const c_void) -> c_int;
+
+    /* Wake a thread waiting on its untrusted event */
+    fn sgx_thread_set_untrusted_event_ocall(ret: *mut c_int, waiter_thread: *const c_void)
+        -> c_int;
+
+    /* Wake a thread waiting on its untrusted event, and wait on my untrusted event */
+    fn sgx_thread_setwait_untrusted_events_ocall(
+        ret: *mut c_int,
+        waiter_thread: *const c_void,
+        self_thread: *const c_void,
+    ) -> c_int;
+
+    /* Wake multiple threads waiting on their untrusted events */
+    fn sgx_thread_set_multiple_untrusted_events_ocall(
+        ret: *mut c_int,
+        waiter_threads: *const *const c_void,
+        total: size_t,
+    ) -> c_int;
 }
