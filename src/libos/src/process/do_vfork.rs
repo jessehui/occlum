@@ -1,5 +1,8 @@
+use super::thread::sgx_thread_get_self;
+use super::untrusted_event::{set_event, wait_event};
 use super::{ProcessRef, ThreadId, ThreadRef};
 use crate::fs::FileTable;
+use crate::interrupt::broadcast_interrupts;
 use crate::prelude::*;
 use crate::syscall::CpuContext;
 use std::collections::HashMap;
@@ -12,15 +15,22 @@ use std::mem;
 // Thus in this implementation, the main idea is to let child use parent's task until exit or execve.
 //
 // Limitation:
-// The child process will not have a complete process structure before execve. Thus during the time from vfork
+// 1. The child process will not have a complete process structure before execve. Thus during the time from vfork
 // to new child process execve or exit, the child process just reuse the parent process's everything, including
 // task, pid and etc. And also the log of child process will not start from the point that vfork returns but the
 // point that execve returns.
+// 2. When vfork is called and the current process has other running child threads, for Linux, the other threads remain
+// running. For Occlum, this behavior is different. All the other threads will be frozen until the vfork returns or
+// execve is called in the child process. The reason is that since Occlum doesn't support fork, many applications will
+// use vfork to replace fork. For multi-threaded applications, if vfork doesn't stop other child threads, the application
+// will be more likely to fail because the child process directly uses the VM and the file table of the parent process.
 
 lazy_static! {
     // Store all the parents's file tables who call vfork. It will be recovered when the child exits or has its own task.
     // K: parent pid, V: parent file table
     static ref VFORK_PARENT_FILE_TABLES: SgxMutex<HashMap<pid_t, FileTable>> = SgxMutex::new(HashMap::new());
+    // Store the parent's child threads which are put to sleep. It will be woken up when the child process exits or exec.
+    static ref VFORK_SLEEP_THREADS: SgxMutex<Vec<usize>> = SgxMutex::new(Vec::new());
 }
 
 thread_local! {
@@ -37,6 +47,17 @@ pub fn do_vfork(mut context: *mut CpuContext) -> Result<isize> {
         let new_tid = ThreadId::new();
         new_tid.as_u32() as pid_t
     };
+
+    // stop all other child threads
+    let child_threads = current.process().threads();
+    child_threads.iter().for_each(|thread| {
+        if thread.tid() != current.tid() {
+            thread.force_stop();
+        }
+    });
+
+    // Don't hesitate. Interrupt all threads right now to stop child threads.
+    broadcast_interrupts();
 
     // Save parent's context in TLS
     VFORK_CONTEXT.with(|cell| {
@@ -78,7 +99,24 @@ pub fn vfork_return_to_parent(
     mut context: *mut CpuContext,
     current_ref: &ThreadRef,
 ) -> Result<isize> {
-    return restore_parent_process(context, current_ref);
+    let child_pid = restore_parent_process(context, current_ref)?;
+
+    // Wake parent's child thread which are all sleeping
+    let current = current!();
+    let children = current.process().threads();
+    children.iter().for_each(|thread| {
+        thread.resume();
+    });
+
+    let mut sleep_threads = VFORK_SLEEP_THREADS.lock().unwrap();
+    sleep_threads.iter().for_each(|&thread_ptr| {
+        info!("Thread 0x{:x} is waken", thread_ptr);
+        set_event(thread_ptr as *const c_void);
+    });
+
+    sleep_threads.clear();
+
+    Ok(child_pid)
 }
 
 fn restore_parent_process(mut context: *mut CpuContext, current_ref: &ThreadRef) -> Result<isize> {
@@ -155,4 +193,14 @@ fn close_files_opened_by_child(current: &ThreadRef, parent_file_table: &FileTabl
         .iter()
         .for_each(|&fd| current.close_file(fd).expect("close child file error"));
     Ok(())
+}
+
+pub fn handle_force_stop() {
+    if current!().is_forced_to_stop() {
+        let current = unsafe { sgx_thread_get_self() };
+        VFORK_SLEEP_THREADS.lock().unwrap().push(current as usize);
+
+        info!("Thread 0x{:x} is forced to stop ...", current as usize);
+        wait_event(current)
+    }
 }
