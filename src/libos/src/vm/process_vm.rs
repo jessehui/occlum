@@ -448,8 +448,22 @@ impl ProcessVM {
         let heap_end = self.heap_range.end();
 
         if new_brk >= heap_start && new_brk <= heap_end {
-            self.brk
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |old_brk| Some(new_brk));
+            let old_brk = self
+                .brk
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |old_brk| Some(new_brk))
+                .expect("brk update failure");
+
+            // Initialize the memory when brk extends.
+            // TODO: Maybe reseting the memory when brk shrinks is more efficient.
+            if old_brk < new_brk {
+                let mem = {
+                    let ptr = old_brk as *mut u8;
+                    let size = new_brk - old_brk;
+                    unsafe { std::slice::from_raw_parts_mut(ptr, size) }
+                };
+                mem.iter_mut().for_each(|b| *b = 0);
+            }
+
             Ok(new_brk)
         } else {
             if new_brk < heap_start {
