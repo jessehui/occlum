@@ -144,7 +144,7 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
             })
             .collect::<Result<()>>()?;
 
-        // Init the heap memory in the process
+        // Reserve space for the heap memory
         let heap_layout = &other_layouts[0];
         let vm_option = VMMapOptionsBuilder::default()
             .size(heap_layout.size())
@@ -162,7 +162,7 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
         })?;
         debug_assert!(heap_range.start() % heap_layout.align() == 0);
         trace!("heap range = {:?}", heap_range);
-        let brk = AtomicUsize::new(heap_range.start());
+        let brk = RwLock::new(heap_range.start());
         chunks.insert(chunk_ref);
 
         // Init the stack memory in the process
@@ -274,7 +274,7 @@ pub struct ProcessVM {
     elf_ranges: Vec<VMRange>,
     heap_range: VMRange,
     stack_range: VMRange,
-    brk: AtomicUsize,
+    brk: RwLock<usize>,
     // Memory safety notes: the mem_chunks field must be the last one.
     //
     // Rust drops fields in the same order as they are declared. So by making
@@ -299,6 +299,7 @@ impl Default for ProcessVM {
 impl Drop for ProcessVM {
     fn drop(&mut self) {
         let mut mem_chunks = self.mem_chunks.write().unwrap();
+        info!("mem_chunks = {:?}", *mem_chunks);
         // There are two cases when this drop is called:
         // (1) Process exits normally and in the end, drop process VM
         // (2) During creating process stage, process VM is ready but there are some other errors when creating the process, e.g. spawn_attribute is set
@@ -440,39 +441,63 @@ impl ProcessVM {
     }
 
     pub fn get_brk(&self) -> usize {
-        self.brk.load(Ordering::SeqCst)
+        *self.brk.read().unwrap()
     }
 
-    pub fn brk(&self, new_brk: usize) -> Result<usize> {
+    pub fn brk(&self, brk: usize) -> Result<usize> {
         let heap_start = self.heap_range.start();
         let heap_end = self.heap_range.end();
 
-        if new_brk >= heap_start && new_brk <= heap_end {
-            let old_brk = self
-                .brk
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |old_brk| Some(new_brk))
-                .expect("brk update failure");
+        let mut brk_guard = self.brk.write().unwrap();
 
-            // Initialize the memory when brk extends.
-            // TODO: Maybe reseting the memory when brk shrinks is more efficient.
-            if old_brk < new_brk {
-                let mem = {
-                    let ptr = old_brk as *mut u8;
-                    let size = new_brk - old_brk;
-                    unsafe { std::slice::from_raw_parts_mut(ptr, size) }
-                };
-                mem.iter_mut().for_each(|b| *b = 0);
+        if brk >= heap_start && brk <= heap_end {
+            // Get page-aligned brk address.
+            let new_brk = align_up(brk, PAGE_SIZE);
+            // Get page-aligned old brk address and set the user-specified brk address WITHOUT page aligned. This is same as Linux.
+            // let old_brk = align_up(self
+            //     .brk
+            //     .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |old_brk| Some(brk))
+            //     .expect("brk update failure"), PAGE_SIZE);
+            let old_brk = align_up(*brk_guard, PAGE_SIZE);
+
+            // Reset the memory when brk shrinks.
+            if new_brk < old_brk {
+                let shrink_brk_range =
+                    VMRange::new(new_brk, old_brk).expect("shrink brk range must be valid");
+                USER_SPACE_VM_MANAGER.reset_memory(shrink_brk_range)?;
             }
 
-            Ok(new_brk)
+            // let chunk = {
+            //     let current = current!();
+            //     let process_mem_chunks = current.vm().mem_chunks().read().unwrap();
+            //     let chunk = process_mem_chunks
+            //         .iter()
+            //         .find(|&chunk| chunk.range().intersect(&protect_range).is_some());
+            //     if chunk.is_none() {
+            //         return_errno!(ENOMEM, "invalid range");
+            //     }
+            //     chunk.unwrap().clone()
+            // };
+
+            // let mem = {
+            //     let ptr = old_brk as *mut u8;
+            //     let size = new_brk - old_brk;
+            //     unsafe { std::slice::from_raw_parts_mut(ptr, size) }
+            // };
+            // mem.iter_mut().for_each(|b| *b = 0);
+            // }
+
+            // Return the user-specified brk address without page aligned.
+            *brk_guard = brk;
+            Ok(brk)
         } else {
-            if new_brk < heap_start {
+            if brk < heap_start {
                 error!("New brk address is too low");
-            } else if new_brk > heap_end {
+            } else if brk > heap_end {
                 error!("New brk address is too high");
             }
 
-            Ok(self.get_brk())
+            Ok(*brk_guard)
         }
     }
 

@@ -1,6 +1,6 @@
 use super::*;
 
-#[derive(Clone, Copy, Default, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Default, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct VMRange {
     pub(super) start: usize,
     pub(super) end: usize,

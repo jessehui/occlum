@@ -56,10 +56,17 @@ impl VMManager {
         internal.free_chunk(chunk);
     }
 
+    pub fn find_free_range_pre_alloc(&self, alloc_options: &VMMapOptions) -> Result<VMRange> {
+        let addr = *alloc_options.addr();
+        let size = *alloc_options.size();
+        let align = *alloc_options.align();
+        self.internal().find_free_gaps(size, align, addr)
+    }
+
     // Allocate single VMA chunk for new process whose process VM is not ready yet
     pub fn alloc(&self, options: &VMMapOptions) -> Result<(VMRange, ChunkRef)> {
-        let addr = *options.addr();
-        let size = *options.size();
+        // let addr = *options.addr();
+        // let size = *options.size();
         if let Ok(new_chunk) = self.internal().mmap_chunk(options) {
             return Ok((new_chunk.range().clone(), new_chunk));
         }
@@ -362,6 +369,81 @@ impl VMManager {
                 return internal_manager.mprotect_single_vma_chunk(&chunk, protect_range, perms);
             }
         }
+    }
+
+    // Reset memory permission to default (R/W) and reset the memory contents to zeor. Currently only used by brk.
+    pub fn reset_memory(&self, reset_range: VMRange) -> Result<()> {
+        info!("reset range = {:?}", reset_range);
+        info!("all chunks = {:?}", self.internal().chunks);
+        // let chunks = {
+        //     let current = current!();
+        //     let process_mem_chunks = current.vm().mem_chunks().read().unwrap();
+        //     let chunk = process_mem_chunks
+        //         .iter()
+        //         .find(|&chunk| chunk.range().intersect(&reset_range).is_some());
+        //     if chunk.is_none() {
+        //         return_errno!(ENOMEM, "invalid range");
+        //     }
+        //     chunk.unwrap().clone()
+        // };
+
+        // // TODO: Support reset range spans multiple chunks
+        // if !chunk.range().is_superset_of(&reset_range) {
+        //     return_errno!(EINVAL, "reset range is not in a single chunk");
+        // }
+        let intersect_chunks = {
+            let chunks = self
+                .internal()
+                .chunks
+                .iter()
+                .filter(|&chunk| chunk.range().intersect(&reset_range).is_some())
+                .map(|chunk| chunk.clone())
+                .collect::<Vec<_>>();
+
+            // In the heap area, there shouldn't be any default chunks or chunks owned by other process.
+            if chunks
+                .iter()
+                .any(|chunk| !chunk.is_owned_by_current_process() || !chunk.is_single_vma())
+            {
+                return_errno!(EINVAL, "There is something wrong with the intersect chunks");
+            }
+            chunks
+        };
+        info!("intersect chunks = {:?}", intersect_chunks);
+
+        let mut intersect_ranges = intersect_chunks
+            .iter()
+            .map(|chunk| chunk.range().intersect(&reset_range).unwrap())
+            .collect::<Vec<_>>();
+
+        info!("intersect ranges = {:?}", intersect_ranges);
+
+        intersect_chunks.iter().for_each(|chunk| {
+            if let ChunkType::SingleVMA(vma) = chunk.internal() {
+                let mut internal_manager = self.internal();
+                internal_manager.mprotect_single_vma_chunk(&chunk, reset_range, VMPerms::DEFAULT);
+            }
+        });
+
+        intersect_ranges.iter().for_each(|range| unsafe {
+            let buf = range.as_slice_mut();
+            buf.iter_mut().for_each(|b| *b = 0)
+        });
+
+        // if let ChunkType::SingleVMA(vma) = chunk.internal() {
+        //     let mut internal_manager = self.internal();
+        //     internal_manager.mprotect_single_vma_chunk(&chunk, reset_range, VMPerms::DEFAULT)?;
+
+        //     // Reset to zero
+        //     unsafe {
+        //         let buf = reset_range.as_slice_mut();
+        //         buf.iter_mut().for_each(|b| *b = 0)
+        //     }
+        // } else {
+        //     return_errno!(ENOMEM, "brk should only handle Single VMA chunks");
+        // }
+
+        Ok(())
     }
 
     pub fn msync(&self, addr: usize, size: usize) -> Result<()> {
@@ -863,23 +945,31 @@ impl InternalVMManager {
                 }
             }
         };
+        info!("updated vmas = {:?}", updated_vmas);
 
         let current = current!();
         while updated_vmas.len() > 1 {
             let vma = updated_vmas.pop().unwrap();
+            info!("vma = {:?}", vma);
             self.add_new_chunk(&current, vma);
         }
 
         debug_assert!(updated_vmas.len() == 1);
         let vma = updated_vmas.pop().unwrap();
+        info!("last vma = {:?}", vma);
         self.update_single_vma_chunk(&current, &chunk, vma);
+
+        info!("self chunks = {:?}", self.chunks);
 
         Ok(())
     }
 
     fn add_new_chunk(&mut self, current_thread: &ThreadRef, new_vma: VMArea) {
         let new_vma_chunk = Arc::new(Chunk::new_chunk_with_vma(new_vma));
-        self.chunks.insert(new_vma_chunk.clone());
+        info!("new_vma_chunk = {:?}", new_vma_chunk);
+        let ret = self.chunks.insert(new_vma_chunk.clone());
+        info!("chunks insert ret = {:?}", ret);
+        info!("add new chunk: self chunks = {:?}", self.chunks);
         current_thread.vm().add_mem_chunk(new_vma_chunk);
     }
 

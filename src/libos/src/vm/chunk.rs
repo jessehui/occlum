@@ -34,7 +34,7 @@ impl Hash for Chunk {
 
 impl Ord for Chunk {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.range.start().cmp(&other.range.start())
+        self.range.cmp(&other.range)
     }
 }
 
