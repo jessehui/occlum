@@ -106,6 +106,7 @@ impl<A: Addr + 'static, R: Runtime> ConnectingStream<A, R> {
                 // Store the errno
                 let errno = Errno::from(-retval as u32);
                 req.errno = Some(errno);
+                error!("connect error = {:?}", errno);
                 drop(req);
 
                 arc_self.connected.store(false, Ordering::Relaxed);

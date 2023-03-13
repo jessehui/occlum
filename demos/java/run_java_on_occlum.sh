@@ -54,7 +54,7 @@ build_hello() {
     # Copy JVM and class file into Occlum instance and build
     rm -rf image
     copy_bom -f ../hello_world.yaml --root image --include-dir /opt/occlum/etc/template
-    occlum build
+    occlum build -f
 }
 
 run_hello() {
