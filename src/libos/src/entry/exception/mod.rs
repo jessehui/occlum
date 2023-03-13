@@ -9,6 +9,7 @@ use self::syscall::{handle_syscall_exception, SYSCALL_OPCODE};
 use super::context_switch::{self, CpuContext, FpRegs, GpRegs, CURRENT_CONTEXT};
 use crate::prelude::*;
 use crate::signal::{FaultSignal, SigSet};
+use crate::vm::{enclave_page_fault_handler, USER_SPACE_VM_MANAGER};
 
 // Modules for instruction simulation
 mod cpuid;
@@ -31,6 +32,20 @@ pub fn register_exception_handlers() {
 extern "C" fn exception_entrypoint(sgx_except_info: *mut sgx_exception_info_t) -> i32 {
     let sgx_except_info = unsafe { &mut *sgx_except_info };
 
+    if !USER_SPACE_VM_MANAGER
+        .range()
+        .contains(sgx_except_info.cpu_context.rip as usize)
+    {
+        let pf_addr = sgx_except_info.exinfo.faulting_address as usize;
+        if !USER_SPACE_VM_MANAGER.range().contains(pf_addr) {
+            return SGX_MM_EXCEPTION_CONTINUE_SEARCH;
+        } else {
+            // kernel code triggers PF. This can happen when read syscall triggers user buffer PF.
+            info!("Kernel code triggers PF");
+            enclave_page_fault_handler(sgx_except_info.exinfo).expect("handle PF failure");
+            return SGX_MM_EXCEPTION_CONTINUE_EXECUTION;
+        }
+    }
     // Update the current CPU context
     let mut curr_context_ptr = context_switch::current_context_ptr();
     let curr_context = unsafe { curr_context_ptr.as_mut() };
@@ -64,6 +79,17 @@ pub async fn handle_exception(exception: &Exception) -> Result<()> {
         } else if ip_opcode == RDTSC_OPCODE {
             return handle_rdtsc_exception();
         }
+    }
+
+    if exception.vector == sgx_exception_vector_t::SGX_EXCEPTION_VECTOR_PF {
+        let pf_addr = exception.exinfo.faulting_address as usize;
+        info!("handle_exception PF caught, pf_addr = 0x{:x}", pf_addr);
+
+        if enclave_page_fault_handler(exception.exinfo).is_ok() {
+            return Ok(());
+        }
+
+        warn!("PF not handled. Turn to signal");
     }
 
     // Then, it must be a "real" exception. Convert it to signal and force delivering it.
