@@ -6,6 +6,7 @@ use super::vm_perms::VMPerms;
 use super::vm_util::*;
 use std::collections::BTreeSet;
 
+use errno::Result;
 use intrusive_collections::rbtree::{Link, RBTree};
 use intrusive_collections::Bound;
 use intrusive_collections::RBTreeLink;
@@ -36,12 +37,12 @@ impl ChunkManager {
                 let range = VMRange::new_empty(start)?;
                 let perms = VMPerms::empty();
                 // sentry vma shouldn't belong to any process
-                VMAObj::new_vma_obj(VMArea::new(range, perms, None, 0))
+                VMAObj::new_vma_obj(VMArea::new(range, perms, None, None, 0, None))
             };
             let end_sentry = {
                 let range = VMRange::new_empty(end)?;
                 let perms = VMPerms::empty();
-                VMAObj::new_vma_obj(VMArea::new(range, perms, None, 0))
+                VMAObj::new_vma_obj(VMArea::new(range, perms, None, None, 0, None))
             };
             let mut new_tree = RBTree::new(VMAAdapter::new());
             new_tree.insert(start_sentry);
@@ -83,16 +84,7 @@ impl ChunkManager {
                 continue;
             }
 
-            Self::flush_file_vma(vma);
-
-            if !vma.perms().is_default() {
-                VMPerms::apply_perms(vma, VMPerms::default());
-            }
-
-            unsafe {
-                let buf = vma.as_slice_mut();
-                buf.iter_mut().for_each(|b| *b = 0)
-            }
+            vma.flush_memory();
 
             self.free_manager.add_range_back_to_free_manager(vma);
             self.free_size += vma.size();
@@ -110,6 +102,7 @@ impl ChunkManager {
         if let VMMapAddr::Force(addr) = addr {
             self.munmap(addr, size)?;
         }
+        warn!("mmap options = {:?}", options);
 
         // Find and allocate a new range for this mmap request
         let new_range = self.free_manager.find_free_range(size, align, addr)?;
@@ -118,24 +111,42 @@ impl ChunkManager {
         let new_vma = VMArea::new(
             new_range,
             *options.perms(),
+            Some(options.initializer().clone()),
             options.initializer().backed_file(),
             current_pid,
-        );
+            None,
+        )
+        .init_memory(options)?;
+        info!("new vma is ready");
 
-        // Initialize the memory of the new range
-        let buf = unsafe { new_vma.as_slice_mut() };
-        let ret = options.initializer().init_slice(buf);
-        if let Err(e) = ret {
-            // Return the free range before return with error
-            self.free_manager
-                .add_range_back_to_free_manager(new_vma.range());
-            return_errno!(e.errno(), "failed to mmap");
-        }
+        // // Commit page and init the memory if committed
+        // let page_policy = options.page_policy();
+        // let mut first_time_commit = false;
+        // if !new_vma.is_fully_committed() && page_policy == &PagePolicy::CommitNow {
+        //     new_vma.commit_current_vma()?;
+        //     first_time_commit = true;
+        // }
 
-        // Set memory permissions
-        if !options.perms().is_default() {
-            VMPerms::apply_perms(&new_vma, new_vma.perms());
-        }
+        // if new_vma.is_partially_committed() {
+        //     // Init commmitted memory if it is back by a file.
+        //     new_vma.init_committed_memory().unwrap();
+        // } else if new_vma.is_fully_committed() {
+        //     // Initialize the memory of the new range
+        //     let buf = unsafe { new_vma.as_slice_mut() };
+        //     let ret = options.initializer().init_slice(buf, first_time_commit);
+        //     if let Err(e) = ret {
+        //         // Return the free range before return with error
+        //         self.free_manager
+        //             .add_range_back_to_free_manager(new_vma.range());
+        //         return_errno!(e.errno(), "failed to mmap");
+        //     }
+
+        //     // Set memory permissions
+        //     if !options.perms().is_default() {
+        //         new_vma.modify_protection_lazy(None, VMPerms::DEFAULT, new_vma.perms(), false);
+        //     }
+        // }
+
         self.free_size -= new_vma.size();
         // After initializing, we can safely insert the new VMA
         self.vmas.insert(VMAObj::new_vma_obj(new_vma));
@@ -165,11 +176,30 @@ impl ChunkManager {
                 Some(intersection_vma) => intersection_vma,
             };
 
-            // File-backed VMA needs to be flushed upon munmap
-            Self::flush_file_vma(&intersection_vma);
-            if !&intersection_vma.perms().is_default() {
-                VMPerms::apply_perms(&intersection_vma, VMPerms::default());
-            }
+            // if intersection_vma.is_partially_committed() {
+            //     intersection_vma.flush_committed_memory()?;
+            // }
+
+            // if intersection_vma.is_fully_committed() {
+            //     if !intersection_vma.perms().is_default() || intersection_vma.need_reset_perms() {
+            //         // let force = true;
+            //         intersection_vma.modify_protection(
+            //             &intersection_vma,
+            //             intersection_vma.perms(),
+            //             VMPerms::default(),
+            //         );
+            //     }
+
+            //     // File-backed VMA needs to be flushed upon munmap
+            //     Self::flush_file_vma(&intersection_vma);
+
+            //     // Reset zero
+            //     unsafe {
+            //         let buf = intersection_vma.as_slice_mut();
+            //         buf.iter_mut().for_each(|b| *b = 0)
+            //     }
+            // }
+            intersection_vma.flush_memory()?;
 
             if vma.range() == intersection_vma.range() {
                 // Exact match. Just remove.
@@ -189,12 +219,6 @@ impl ChunkManager {
                     // The new element will be inserted at the correct position in the tree based on its key automatically.
                     vmas_cursor.insert(vma_right_part);
                 }
-            }
-
-            // Reset zero
-            unsafe {
-                let buf = intersection_vma.as_slice_mut();
-                buf.iter_mut().for_each(|b| *b = 0)
             }
 
             self.free_manager
@@ -302,7 +326,11 @@ impl ChunkManager {
             if intersection_vma.range() == containing_vma.range() {
                 // The whole containing_vma is mprotected
                 containing_vma.set_perms(new_perms);
-                VMPerms::apply_perms(&containing_vma, containing_vma.perms());
+                containing_vma.modify_permissions_for_committed_pages(
+                    old_perms,
+                    containing_vma.perms(),
+                    false,
+                );
                 containing_vmas.replace_with(VMAObj::new_vma_obj(containing_vma));
                 containing_vmas.move_next();
                 continue;
@@ -323,13 +351,17 @@ impl ChunkManager {
                         containing_vma.set_end(protect_range.start());
 
                         // New VMA
-                        let new_vma = VMArea::inherits_file_from(
+                        let mut new_vma = VMArea::inherits_file_from(
                             &containing_vma,
                             protect_range,
                             new_perms,
                             current_pid,
                         );
-                        VMPerms::apply_perms(&new_vma, new_vma.perms());
+                        new_vma.modify_permissions_for_committed_pages(
+                            old_perms,
+                            new_vma.perms(),
+                            false,
+                        );
                         let new_vma = VMAObj::new_vma_obj(new_vma);
 
                         // Another new VMA
@@ -360,13 +392,17 @@ impl ChunkManager {
                             debug_assert!(remain_vma.end() == containing_vma.end());
                             containing_vma.set_start(remain_vma.start());
                         }
-                        let new_vma = VMArea::inherits_file_from(
+                        let mut new_vma = VMArea::inherits_file_from(
                             &containing_vma,
                             intersection_vma.range().clone(),
                             new_perms,
                             current_pid,
                         );
-                        VMPerms::apply_perms(&new_vma, new_vma.perms());
+                        new_vma.modify_permissions_for_committed_pages(
+                            old_perms,
+                            new_vma.perms(),
+                            false,
+                        );
 
                         containing_vmas.replace_with(VMAObj::new_vma_obj(containing_vma));
                         containing_vmas.insert(VMAObj::new_vma_obj(new_vma));
@@ -394,7 +430,8 @@ impl ChunkManager {
                 None => continue,
                 Some(vma) => vma,
             };
-            Self::flush_file_vma(&vma);
+            // Self::flush_file_vma(&vma);
+            vma.flush_file_vma();
         }
         Ok(())
     }
@@ -404,35 +441,9 @@ impl ChunkManager {
     pub fn msync_by_file(&mut self, sync_file: &FileRef) {
         let is_same_file = |file: &FileRef| -> bool { file == sync_file };
         for vma_obj in &self.vmas {
-            Self::flush_file_vma_with_cond(&vma_obj.vma(), is_same_file);
+            // Self::flush_file_vma_with_cond(&vma_obj.vma(), is_same_file);
+            vma_obj.vma().flush_file_vma_with_cond(is_same_file);
         }
-    }
-
-    /// Flush a file-backed VMA to its file. This has no effect on anonymous VMA.
-    pub fn flush_file_vma(vma: &VMArea) {
-        Self::flush_file_vma_with_cond(vma, |_| true)
-    }
-
-    /// Same as flush_vma, except that an extra condition on the file needs to satisfy.
-    pub fn flush_file_vma_with_cond<F: Fn(&FileRef) -> bool>(vma: &VMArea, cond_fn: F) {
-        let (file, file_offset) = match vma.writeback_file() {
-            None => return,
-            Some((file_and_offset)) => file_and_offset,
-        };
-        let file_handle = file.as_async_file_handle().unwrap();
-        let file_writable = file_handle.access_mode().writable();
-        if !file_writable {
-            return;
-        }
-        if !cond_fn(file) {
-            return;
-        }
-        file_handle
-            .dentry()
-            .inode()
-            .as_sync_inode()
-            .unwrap()
-            .write_at(file_offset, unsafe { vma.as_slice() });
     }
 
     pub fn find_mmap_region(&self, addr: usize) -> Result<VMRange> {
@@ -446,6 +457,27 @@ impl ChunkManager {
         }
 
         return Ok(vma.range().clone());
+    }
+
+    pub fn handle_page_fault(
+        &mut self,
+        pf_addr: usize,
+        is_protection_violation: bool,
+    ) -> Result<()> {
+        let mut vma_cursor = self.vmas.upper_bound_mut(Bound::Included(&pf_addr));
+        if vma_cursor.is_null() {
+            return_errno!(ENOMEM, "no mmap regions that contains the address");
+        }
+        let vma = vma_cursor.get().unwrap().vma();
+        if vma.pid() != current!().process().pid() || !vma.contains(pf_addr) {
+            return_errno!(ENOMEM, "no mmap regions that contains the address");
+        }
+
+        let mut vma = vma.clone();
+        vma.handle_page_fault(pf_addr, is_protection_violation);
+        vma_cursor.replace_with(VMAObj::new_vma_obj(vma));
+
+        Ok(())
     }
 
     pub fn usage_percentage(&self) -> f32 {

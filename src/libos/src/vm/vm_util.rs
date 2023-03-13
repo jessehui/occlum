@@ -40,14 +40,17 @@ impl Default for VMInitializer {
 }
 
 impl VMInitializer {
-    pub fn init_slice(&self, buf: &mut [u8]) -> Result<()> {
+    pub fn init_slice(&self, buf: &mut [u8], first_time_commit: bool) -> Result<()> {
         match self {
             VMInitializer::DoNothing() | VMInitializer::ElfSpecific { .. } => {
                 // Do nothing
             }
             VMInitializer::FillZeros() => {
-                for b in buf {
-                    *b = 0;
+                // If this is the first time commit, no need to reset zeros.
+                if !first_time_commit {
+                    for b in buf {
+                        *b = 0;
+                    }
                 }
             }
             VMInitializer::CopyFrom { range } => {
@@ -193,6 +196,19 @@ impl VMMapAddr {
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum PagePolicy {
+    ReserveOnly = 0x1,    // Only reserve
+    CommitNow = 0x2,      // Commit all pages when mmap.
+    CommitOnDemand = 0x4, // Reserve space when mmap, commit in the PF handler. This is the default policy.
+}
+
+impl Default for PagePolicy {
+    fn default() -> PagePolicy {
+        PagePolicy::CommitOnDemand
+    }
+}
+
 #[derive(Builder, Debug)]
 #[builder(pattern = "owned", build_fn(skip), no_std)]
 pub struct VMMapOptions {
@@ -201,6 +217,7 @@ pub struct VMMapOptions {
     perms: VMPerms,
     addr: VMMapAddr,
     initializer: VMInitializer,
+    page_policy: PagePolicy,
 }
 
 // VMMapOptionsBuilder is generated automatically, except the build function
@@ -249,12 +266,14 @@ impl VMMapOptionsBuilder {
             Some(initializer) => initializer.clone(),
             None => VMInitializer::default(),
         };
+        let page_policy = self.page_policy.unwrap_or_default();
         Ok(VMMapOptions {
             size,
             align,
             perms,
             addr,
             initializer,
+            page_policy,
         })
     }
 
@@ -296,6 +315,10 @@ impl VMMapOptions {
 
     pub fn initializer(&self) -> &VMInitializer {
         &self.initializer
+    }
+
+    pub fn page_policy(&self) -> &PagePolicy {
+        &self.page_policy
     }
 }
 
