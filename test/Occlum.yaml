@@ -10,7 +10,7 @@ resource_limits:
   kernel_space_heap_size:
     # Reserved and committed during the initialization stage. The more, the longer it takes to initialize.
     # NOTE: Decrease this value when EDMM support is enabled.
-    init: 512MB
+    init: 4KB
     # Only committed when necessary. Only valid with EDMM support.
     max:  512MB
   # The total size of enclave memory available to the user applications running in LibOS.
@@ -19,7 +19,7 @@ resource_limits:
   user_space_size:
     # Reserved and committed during the initialization stage. The more, the longer it takes to initialize.
     # NOTE: Decrease this value when EDMM support is enabled.
-    init: 420MB
+    init: 4KB
     # Only committed when necessary. Only valid with EDMM support.
     max:  64GB
 

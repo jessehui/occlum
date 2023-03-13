@@ -25,10 +25,14 @@ struct DefaultConfig {
     num_of_tcs_used_by_occlum_kernel: u32,
     // Corresponds to TCSMaxNum in Enclave.xml
     num_of_cpus_max: u32,
+    // Extra user region memory for SDK
+    extra_user_region_for_sdk: &'static str,
     // Corresponds to MiscSelect in Enclave.xml
     misc_select: &'static str,
     // Corresponds to MiscMask in Enclave.xml
     misc_mask: &'static str,
+    // Extra memory size for simulation mode
+    extra_mem_size_for_sim: usize,
 }
 
 impl DefaultConfig {
@@ -37,10 +41,12 @@ impl DefaultConfig {
             // from OCCLUM_KERNEL_TCS_NUM defined in src/libos/src/entry/enclave.rs
             num_of_tcs_used_by_occlum_kernel: 5,
             num_of_cpus_max: 1024,
+            extra_user_region_for_sdk: "1GB",
             // In order to operate on the User Region using EDMM API,
             // both MiscSelect[0] and MiscMask[0] need to be set to 1
             misc_select: "1",
             misc_mask: "0xFFFFFFFF",
+            extra_mem_size_for_sim: 100 << 20, // 100M
         }
     }
 }
@@ -118,6 +124,19 @@ fn main() {
                 ),
         )
         .get_matches();
+
+    let is_sim_mode = {
+        if let Ok(sgx_mode) = std::env::var("SGX_MODE") {
+            if &sgx_mode == "HW" {
+                false
+            } else {
+                true
+            }
+        } else {
+            // Default HW mode
+            false
+        }
+    };
 
     let occlum_config_file_path = matches.value_of("user_json").unwrap();
     debug!(
@@ -216,6 +235,23 @@ fn main() {
             return;
         }
 
+        let user_space_init_size = {
+            if !is_sim_mode {
+                user_space_init_size
+            } else {
+                // For simulation mode, we use reserved memory to simulate user region
+                // To achieve this, we need a lot more memory than init size.
+                let max_size = user_space_max_size.unwrap();
+                Ok(DEFAULT_CONFIG.extra_mem_size_for_sim + max_size)
+            }
+        };
+
+        let extra_user_space = parse_memory_size(DEFAULT_CONFIG.extra_user_region_for_sdk);
+        if extra_user_space.is_err() {
+            println!("The extra_user_region_for_sdk in default config is not correct.");
+            return;
+        }
+
         let kss_tuple = parse_kss_conf(&occlum_config);
 
         // Generate the enclave configuration
@@ -242,8 +278,7 @@ fn main() {
             ReservedMemMinSize: user_space_init_size.unwrap() as u64,
             ReservedMemInitSize: user_space_init_size.unwrap() as u64,
             ReservedMemExecutable: 1,
-            // TODO: Enable this field when EDMM support is ready
-            // UserRegionSize: user_space_max_size.unwrap() as u64,
+            UserRegionSize: user_space_max_size.unwrap() as u64 + extra_user_space.unwrap() as u64,
             EnableKSS: kss_tuple.0,
             ISVEXTPRODID_H: kss_tuple.1,
             ISVEXTPRODID_L: kss_tuple.2,
@@ -602,7 +637,7 @@ struct EnclaveConfiguration {
     // TODO: Enable this field when EDMM support is ready
     // UserRegionSize is the size of the region where users can
     // operate on using the EDMM APIs introduced since Intel SGX SDK 2.18
-    // UserRegionSize: u64,
+    UserRegionSize: u64,
     EnableKSS: u32,
     ISVEXTPRODID_H: u64,
     ISVEXTPRODID_L: u64,
