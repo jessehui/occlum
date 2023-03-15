@@ -138,7 +138,7 @@ jobs:
 
     - name: Run Golang grpc ping test
       run: |
-        sleep ${{ env.nap_time }};
+        sleep 500;
         docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum/demos/golang/grpc_pingpong && ./run_ping_on_occlum.sh"
 
     # Sleeps longer to make sure the server is up.
@@ -969,7 +969,7 @@ jobs:
 
     - name: Run mysql benchmarks
       run: |
-        sleep 120;
+        sleep 500;
         docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum/demos/mysql && ./run_benchmarks.sh"
 
     - name: Clean the environment

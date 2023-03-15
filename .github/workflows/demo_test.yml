@@ -513,7 +513,7 @@ jobs:
 
     - name: Run flink task
       run: |
-        sleep ${{ env.nap_time }};
+        sleep 500;
         docker exec ${{ github.job }} bash -c "cd /root/occlum/demos/flink && SGX_MODE=SIM ./run_flink_on_occlum_glibc.sh task"
 
     - name: Check flink task manager's log
