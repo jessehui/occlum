@@ -281,6 +281,9 @@ impl VMArea {
         debug_assert!(pf_page_start_addr % PAGE_SIZE == 0);
         debug_assert!(commit_size % PAGE_SIZE == 0);
 
+        if matches!(self.epc_type, EPC::ReservedMem(_)) {
+            return_errno!(EINVAL, "reserved memory shouldn't trigger PF");
+        }
         // TODO: Decide if the PF is triggered by non-committed page or protection violation
         if self.is_reserved_only() {
             let commit_size = self.commit_once_for_page_fault(pf_addr)?;
@@ -690,6 +693,8 @@ impl VMArea {
 
     fn page_fault_handler_extend_permission(&mut self, pf_addr: usize) -> Result<()> {
         let permission = self.perms();
+        assert!(self.lazy_extend_perms.is_some());
+
         if self.is_fully_committed() {
             self.modify_protection_force(self.range(), permission);
             return Ok(());

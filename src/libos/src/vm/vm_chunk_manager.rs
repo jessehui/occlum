@@ -474,7 +474,7 @@ impl ChunkManager {
         }
 
         let mut vma = vma.clone();
-        vma.handle_page_fault(pf_addr, is_protection_violation);
+        vma.handle_page_fault(pf_addr, is_protection_violation)?;
         vma_cursor.replace_with(VMAObj::new_vma_obj(vma));
 
         Ok(())
