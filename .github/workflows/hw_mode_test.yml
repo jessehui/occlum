@@ -134,7 +134,7 @@ jobs:
             cd /root/occlum/demos/golang/grpc_pingpong && ./prepare_ping_pong.sh"
 
     - name: Start Golang grpc pingpong server
-      run: docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum/demos/golang/grpc_pingpong && ./run_pong_on_occlum.sh" &
+      run: docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum/demos/golang/grpc_pingpong && ./run_pong_on_occlum.sh &; sleep 500;"
 
     - name: Run Golang grpc ping test
       run: |
@@ -965,7 +965,7 @@ jobs:
       run: docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum/demos/mysql && ./dl_and_build_mysql.sh"
 
     - name: Run mysql server
-      run: docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum/demos/mysql && ./run_mysql_server.sh" &
+      run: docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum/demos/mysql && ./run_mysql_server.sh &; sleep 500"
 
     - name: Run mysql benchmarks
       run: |
