@@ -693,7 +693,6 @@ impl VMArea {
 
     fn page_fault_handler_extend_permission(&mut self, pf_addr: usize) -> Result<()> {
         let permission = self.perms();
-        assert!(self.lazy_extend_perms.is_some());
 
         if self.is_fully_committed() {
             self.modify_protection_force(self.range(), permission);
