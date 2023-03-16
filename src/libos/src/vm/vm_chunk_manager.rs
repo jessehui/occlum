@@ -106,17 +106,32 @@ impl ChunkManager {
 
         // Find and allocate a new range for this mmap request
         let new_range = self.free_manager.find_free_range(size, align, addr)?;
+        warn!("mmap new range = {:?}", new_range);
         let new_addr = new_range.start();
         let current_pid = current!().process().pid();
-        let new_vma = VMArea::new(
-            new_range,
-            *options.perms(),
-            Some(options.initializer().clone()),
-            options.initializer().backed_file(),
-            current_pid,
-            None,
-        )
-        .init_memory(options)?;
+        let new_vma = {
+            let new_vma = VMArea::new(
+                new_range,
+                *options.perms(),
+                Some(options.initializer().clone()),
+                options.initializer().backed_file(),
+                current_pid,
+                None,
+            )
+            .init_memory(options);
+
+            if new_vma.is_err() {
+                let error = new_vma.err().unwrap();
+                error!("init memory failure: {}", error.backtrace());
+                let range = VMRange::new_with_size(new_addr, size).unwrap();
+                self.free_manager
+                    .add_range_back_to_free_manager(&range)
+                    .unwrap();
+                return Err(error);
+            }
+
+            new_vma.unwrap()
+        };
         info!("new vma is ready");
 
         // // Commit page and init the memory if committed
@@ -539,6 +554,8 @@ impl VMRemapParser for ChunkManager {
 
 impl Drop for ChunkManager {
     fn drop(&mut self) {
+        warn!("drop chunk manager = {:?}", self);
+        info!("free manager = {:?}", self.free_manager);
         assert!(self.is_empty());
         assert!(self.free_size == self.range.size());
         assert!(self.free_manager.free_size() == self.range.size());

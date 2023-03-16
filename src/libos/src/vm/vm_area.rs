@@ -694,6 +694,11 @@ impl VMArea {
     fn page_fault_handler_extend_permission(&mut self, pf_addr: usize) -> Result<()> {
         let permission = self.perms();
 
+        // This is intended by the application.
+        if permission == VMPerms::NONE {
+            return_errno!(EPERM, "trying to access PROT_NONE memory");
+        }
+
         if self.is_fully_committed() {
             self.modify_protection_force(self.range(), permission);
             return Ok(());
