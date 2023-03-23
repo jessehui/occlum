@@ -11,7 +11,7 @@ use intrusive_collections::rbtree::{Link, RBTree};
 use intrusive_collections::{intrusive_adapter, KeyAdapter};
 
 // Commit memory size when the PF occurs.
-const COMMIT_ONCE_SIZE: usize = 256 * PAGE_SIZE;
+const COMMIT_ONCE_SIZE: usize = 1 * PAGE_SIZE;
 
 #[derive(Clone, Debug)]
 pub struct VMArea {
@@ -109,7 +109,7 @@ impl VMArea {
             });
             (Some(new_file), new_initializer)
         } else {
-            (None, None)
+            (None, vma.initializer().clone())
         };
 
         Self::new(
@@ -272,14 +272,14 @@ impl VMArea {
         is_protection_violation: bool,
     ) -> Result<()> {
         info!("PF vma = {:?}", self);
-        let (pf_page_start_addr, commit_size, permission) =
-            (self.start(), self.size(), self.perms());
-        warn!(
-            "pf_page_start_addr = 0x{:x}, commit_size = 0x{:x}, perms = {:?}",
-            pf_page_start_addr, commit_size, permission
-        );
-        debug_assert!(pf_page_start_addr % PAGE_SIZE == 0);
-        debug_assert!(commit_size % PAGE_SIZE == 0);
+        // let (pf_page_start_addr, commit_size, permission) =
+        //     (self.start(), self.size(), self.perms());
+        // warn!(
+        //     "pf_page_start_addr = 0x{:x}, commit_size = 0x{:x}, perms = {:?}",
+        //     pf_page_start_addr, commit_size, permission
+        // );
+        // debug_assert!(pf_page_start_addr % PAGE_SIZE == 0);
+        // debug_assert!(commit_size % PAGE_SIZE == 0);
 
         if matches!(self.epc_type, EPC::ReservedMem(_)) {
             return_errno!(EINVAL, "reserved memory shouldn't trigger PF");
@@ -562,8 +562,9 @@ impl VMArea {
                         .unwrap()
                         .read_at(file_offset, buf)
                         .map_err(|_| errno!(EACCES, "failed to init memory from file"))?;
-                    // info!("file offset = {:?}, write len = {:?}", file_offset, len);
-                    // info!("range offset = {:?}", range.start() - vm_range_start);
+                    info!("file offset = {:?}, write len = {:?}", file_offset, len);
+                    info!("range offset = {:?}", range.start() - vm_range_start);
+                    eprintln!("buf = {:?}", buf);
 
                     // Set memory permissions for the whole VMA.
                     if !self.perms().is_default() {
@@ -662,12 +663,13 @@ impl VMArea {
                 } else {
                     trace!("pf addr = 0x{:x}, uncommitted range = {:?}", pf_addr, range);
                     range.set_start(align_down(pf_addr, PAGE_SIZE));
+                    trace!("target commit range = {:?}", range);
                 }
             }
 
             if range.size() + total_commit_size > COMMIT_ONCE_SIZE {
                 range.resize(COMMIT_ONCE_SIZE - total_commit_size);
-                trace!("range resize = {:?}", range);
+                trace!("after resize, target range = {:?}", range);
             }
 
             // Commit memory

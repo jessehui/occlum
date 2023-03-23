@@ -505,8 +505,8 @@ impl VMManager {
         let mut mem_chunks = thread.vm().mem_chunks().write().unwrap();
 
         mem_chunks.iter().for_each(|chunk| {
-            info!("internal manager = {:?}", internal_manager);
-            info!("free chunk = {:?}", chunk);
+            // info!("internal manager = {:?}", internal_manager);
+            // info!("free chunk = {:?}", chunk);
             internal_manager.munmap_chunk(&chunk, None);
         });
         mem_chunks.clear();

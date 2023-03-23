@@ -15,7 +15,7 @@ rm -rf occlum_instance && occlum new occlum_instance
 pushd occlum_instance
 
 yq '.resource_limits.user_space_size.max = "8000MB" |
-    .resource_limits.kernel_space_heap_size.init = "1000MB" |
+    .resource_limits.kernel_space_heap_size.init = "10MB" |
     .resource_limits.kernel_space_heap_size.max = "2000MB" ' -i Occlum.yaml
 
 # 2. Copy files into Occlum instance and build

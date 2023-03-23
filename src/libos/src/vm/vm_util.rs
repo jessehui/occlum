@@ -206,6 +206,7 @@ pub enum PagePolicy {
 impl Default for PagePolicy {
     fn default() -> PagePolicy {
         PagePolicy::CommitOnDemand
+        // PagePolicy::CommitNow
     }
 }
 

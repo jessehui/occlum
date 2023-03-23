@@ -334,7 +334,7 @@ pub fn enclave_page_fault_handler(exception_info: sgx_misc_exinfo_t) -> Result<(
     };
 
     // let internal_manager = USER_SPACE_VM_MANAGER.internal();
-    // internal_manager.handle_page_fault(pf_addr, is_protection_violation)?;
+    // internal_manager.handle_page_fault(pf_addr, false)?;
     USER_SPACE_VM_MANAGER.handle_page_fault(pf_addr, false)?;
 
     info!("Done page fault handle success!");

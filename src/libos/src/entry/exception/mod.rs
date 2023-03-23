@@ -31,6 +31,10 @@ pub fn register_exception_handlers() {
 #[no_mangle]
 extern "C" fn exception_entrypoint(sgx_except_info: *mut sgx_exception_info_t) -> i32 {
     let sgx_except_info = unsafe { &mut *sgx_except_info };
+    eprintln!(
+        "exception caught, pf_rip = 0x{:x}",
+        sgx_except_info.cpu_context.rip
+    );
 
     if !USER_SPACE_VM_MANAGER
         .range()
@@ -41,7 +45,7 @@ extern "C" fn exception_entrypoint(sgx_except_info: *mut sgx_exception_info_t) -
             return SGX_MM_EXCEPTION_CONTINUE_SEARCH;
         } else {
             // kernel code triggers PF. This can happen when read syscall triggers user buffer PF.
-            info!("Kernel code triggers PF");
+            eprintln!("Kernel code triggers PF");
             enclave_page_fault_handler(sgx_except_info.exinfo).expect("handle PF failure");
             return SGX_MM_EXCEPTION_CONTINUE_EXECUTION;
         }

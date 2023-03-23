@@ -464,7 +464,7 @@ impl PageTracker {
         }
     }
 
-    // Commit pages for page tracker itself. This is common method for both VMATracker and GlobalTracker.
+    // Commit pages for page tracker itself. This is a common method for both VMATracker and GlobalTracker.
     fn commit_pages_internal(&mut self, start_addr: usize, size: usize) {
         debug_assert!(self.type_ != TrackerType::GapTracker);
         if self.fully_committed {
@@ -475,6 +475,7 @@ impl PageTracker {
             let range = VMRange::new_with_size(start_addr, size).unwrap();
             self.range.intersect(&range)
         } {
+            warn!("commit for page tracker: {:?}", self);
             trace!("commit_pages intersection range = {:?}", intersection_range);
             let page_start_id = (intersection_range.start() - self.range().start()) / PAGE_SIZE;
             let page_num = intersection_range.size() / PAGE_SIZE;
