@@ -84,7 +84,7 @@ impl ChunkManager {
                 continue;
             }
 
-            vma.flush_memory();
+            vma.flush_memory().unwrap();
 
             self.free_manager.add_range_back_to_free_manager(vma);
             self.free_size += vma.size();
@@ -191,29 +191,6 @@ impl ChunkManager {
                 Some(intersection_vma) => intersection_vma,
             };
 
-            // if intersection_vma.is_partially_committed() {
-            //     intersection_vma.flush_committed_memory()?;
-            // }
-
-            // if intersection_vma.is_fully_committed() {
-            //     if !intersection_vma.perms().is_default() || intersection_vma.need_reset_perms() {
-            //         // let force = true;
-            //         intersection_vma.modify_protection(
-            //             &intersection_vma,
-            //             intersection_vma.perms(),
-            //             VMPerms::default(),
-            //         );
-            //     }
-
-            //     // File-backed VMA needs to be flushed upon munmap
-            //     Self::flush_file_vma(&intersection_vma);
-
-            //     // Reset zero
-            //     unsafe {
-            //         let buf = intersection_vma.as_slice_mut();
-            //         buf.iter_mut().for_each(|b| *b = 0)
-            //     }
-            // }
             intersection_vma.flush_memory()?;
 
             if vma.range() == intersection_vma.range() {
@@ -222,6 +199,7 @@ impl ChunkManager {
             } else {
                 // The intersection_vma is a subset of current vma
                 let mut remain_vmas = vma.subtract(&intersection_vma);
+                info!("remain vmas after subtract = {:?}", remain_vmas);
                 if remain_vmas.len() == 1 {
                     let new_obj = VMAObj::new_vma_obj(remain_vmas.pop().unwrap());
                     vmas_cursor.replace_with(new_obj);
@@ -362,9 +340,6 @@ impl ChunkManager {
                         let old_end = containing_vma.end();
                         let protect_end = protect_range.end();
 
-                        // Shrinked old VMA
-                        containing_vma.set_end(protect_range.start());
-
                         // New VMA
                         let mut new_vma = VMArea::inherits_file_from(
                             &containing_vma,
@@ -391,6 +366,9 @@ impl ChunkManager {
                             VMAObj::new_vma_obj(new_vma)
                         };
 
+                        // Shrinked old VMA
+                        containing_vma.set_end(protect_range.start());
+
                         containing_vmas.replace_with(VMAObj::new_vma_obj(containing_vma));
                         containing_vmas.insert(new_vma);
                         containing_vmas.insert(new_vma2);
@@ -398,7 +376,8 @@ impl ChunkManager {
                         break;
                     }
                     1 => {
-                        let remain_vma = remain_vmas.pop().unwrap();
+                        let mut remain_vma = remain_vmas.pop().unwrap();
+                        info!("containing_vma 1 = {:?}", containing_vma);
                         if remain_vma.start() == containing_vma.start() {
                             // mprotect right side of the vma
                             containing_vma.set_end(remain_vma.end());
@@ -407,18 +386,26 @@ impl ChunkManager {
                             debug_assert!(remain_vma.end() == containing_vma.end());
                             containing_vma.set_start(remain_vma.start());
                         }
-                        let mut new_vma = VMArea::inherits_file_from(
-                            &containing_vma,
-                            intersection_vma.range().clone(),
-                            new_perms,
-                            current_pid,
-                        );
+                        info!("containing_vma 2 = {:?}", containing_vma);
+                        // let mut new_vma = VMArea::inherits_file_from(
+                        //     &containing_vma,
+                        //     intersection_vma.range().clone(),
+                        //     new_perms,
+                        //     current_pid,
+                        // );
+                        debug_assert!(containing_vma.range() == remain_vma.range());
+                        let mut new_vma = {
+                            let mut vma = intersection_vma;
+                            vma.set_perms(new_perms);
+                            vma
+                        };
                         new_vma.modify_permissions_for_committed_pages(
                             old_perms,
                             new_vma.perms(),
                             false,
                         );
 
+                        info!("mprotect new_vma = {:?}", new_vma);
                         containing_vmas.replace_with(VMAObj::new_vma_obj(containing_vma));
                         containing_vmas.insert(VMAObj::new_vma_obj(new_vma));
                         containing_vmas.move_next();

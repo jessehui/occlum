@@ -129,8 +129,8 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
             .size(heap_layout.size())
             .align(heap_layout.align())
             .perms(VMPerms::READ | VMPerms::WRITE)
-            .page_policy(PagePolicy::CommitOnDemand)
-            // .page_policy(PagePolicy::CommitNow)
+            // .page_policy(PagePolicy::CommitOnDemand)
+            .page_policy(PagePolicy::CommitNow)
             .build()
             .map_err(|e| {
                 &self.handle_error_when_init(&chunks);
@@ -517,9 +517,8 @@ impl ProcessVM {
                 } else {
                     false
                 };
-                VMInitializer::FileBacked {
-                    file: FileBacked::new(file_ref, offset, need_write_back),
-                }
+                let file_back = FileBacked::new(file_ref, offset, need_write_back);
+                VMInitializer::FileBacked { file: file_back }
             }
         };
         let page_policy = {
@@ -553,6 +552,7 @@ impl ProcessVM {
     }
 
     pub fn munmap(&self, addr: usize, size: usize) -> Result<()> {
+        // return Ok(());
         USER_SPACE_VM_MANAGER.munmap(addr, size)
     }
 
@@ -565,6 +565,7 @@ impl ProcessVM {
         };
         let protect_range = VMRange::new_with_size(addr, size)?;
 
+        // return Ok(());
         return USER_SPACE_VM_MANAGER.mprotect(addr, size, perms);
     }
 

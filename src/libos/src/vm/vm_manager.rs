@@ -536,7 +536,7 @@ impl VMManager {
 pub struct InternalVMManager {
     chunks: BTreeSet<ChunkRef>, // track in-use chunks, use B-Tree for better performance and simplicity (compared with red-black tree)
     fast_default_chunks: Vec<ChunkRef>, // empty default chunks
-    free_manager: VMFreeSpaceManager,
+    pub free_manager: VMFreeSpaceManager,
     gaps: Vec<ChunkRef>, // Memory gaps that shouldn't be accessed by users
 }
 
@@ -657,16 +657,17 @@ impl InternalVMManager {
         //     // Reset memory permissions
         //     if !intersection_vma.perms().is_default() || intersection_vma.need_reset_perms() {
         //         // let force = true;
-        //         intersection_vma.modify_protection(
+        //         intersection_vma.modify_protection_force(
         //             &intersection_vma,
-        //             intersection_vma.perms(),
+        //             // intersection_vma.perms(),
         //             VMPerms::default(),
         //             // force,
         //         );
         //     }
 
         //     // File-backed VMA needs to be flushed upon munmap
-        //     ChunkManager::flush_file_vma(&intersection_vma);
+        //     // ChunkManager::flush_file_vma(&intersection_vma);
+        //     intersection_vma.flush_file_vma();
 
         //     // Reset to zero
         //     unsafe {
@@ -674,7 +675,7 @@ impl InternalVMManager {
         //         buf.iter_mut().for_each(|b| *b = 0)
         //     }
         // }
-        intersection_vma.flush_memory();
+        intersection_vma.flush_memory()?;
 
         let mut new_vmas = vma.subtract(&intersection_vma);
         let current = current!();
@@ -781,9 +782,6 @@ impl InternalVMManager {
                     let old_perms = containing_vma.perms();
                     info!("old perms = {:?}", old_perms);
 
-                    containing_vma.set_end(protect_range.start());
-                    info!("containing vma = {:?}", containing_vma);
-
                     let mut new_vma = VMArea::inherits_file_from(
                         &containing_vma,
                         protect_range,
@@ -802,19 +800,14 @@ impl InternalVMManager {
                         )
                     };
 
+                    containing_vma.set_end(protect_range.start());
+                    info!("containing vma = {:?}", containing_vma);
+
                     // Put containing_vma at last to be updated first.
                     let updated_vmas = vec![new_vma, remaining_old_vma, containing_vma.clone()];
                     updated_vmas
                 }
                 _ => {
-                    if same_start {
-                        // Protect range is at left side of the containing vma
-                        containing_vma.set_start(protect_range.end());
-                    } else {
-                        // Protect range is at right side of the containing vma
-                        containing_vma.set_end(protect_range.start());
-                    }
-
                     let mut new_vma = VMArea::inherits_file_from(
                         &containing_vma,
                         protect_range,
@@ -822,6 +815,14 @@ impl InternalVMManager {
                         DUMMY_CHUNK_PROCESS_ID,
                     );
                     new_vma.modify_permissions_for_committed_pages(old_perms, new_perms, false);
+
+                    if same_start {
+                        // Protect range is at left side of the containing vma
+                        containing_vma.set_start(protect_range.end());
+                    } else {
+                        // Protect range is at right side of the containing vma
+                        containing_vma.set_end(protect_range.start());
+                    }
 
                     // Put containing_vma at last to be updated first.
                     let updated_vmas = vec![new_vma, containing_vma.clone()];

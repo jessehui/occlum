@@ -310,7 +310,15 @@ impl PageTracker {
         }
 
         // Commit EPC
-        vm_epc::commit_epc_for_user_space(self.range().start(), self.range().size())?;
+        if self.is_reserved_only() {
+            vm_epc::commit_epc_for_user_space(self.range().start(), self.range().size()).unwrap();
+        } else {
+            debug_assert!(self.is_partially_committed());
+            let uncommitted_ranges = self.get_ranges(false);
+            for range in uncommitted_ranges {
+                vm_epc::commit_epc_for_user_space(range.start(), range.size()).unwrap();
+            }
+        }
 
         // Update the tracker
         self.inner.fill(true);

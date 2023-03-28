@@ -98,21 +98,21 @@ fn get_output_for_vma(vma: &VMArea, heap_or_stack: Option<&str>) -> String {
     let (file_path, offset, device_id, inode_num) = {
         if let Some((file, offset)) = vma.init_file() {
             let file_handle = file.as_async_file_handle().unwrap();
-            let file_path = file_handle.dentry().abs_path();
+            let file_path = file_handle.dentry().abs_path().to_string();
             let inode = file_handle.dentry().inode().as_sync_inode().unwrap();
             let inode_num = inode.metadata().unwrap().inode;
             let device_id = inode.metadata().unwrap().dev;
             (file_path, offset, device_id, inode_num)
         } else if heap_or_stack.is_some() {
-            (heap_or_stack.unwrap(), 0, 0, 0)
+            (heap_or_stack.unwrap().to_string(), 0, 0, 0)
         } else {
-            ("", 0, 0, 0)
+            ("".to_string(), 0, 0, 0)
         }
     };
 
     let shared = vma.writeback_file().is_some();
     print_each_map(
-        range, perms, shared, offset, device_id, inode_num, file_path,
+        range, perms, shared, offset, device_id, inode_num, &file_path,
     )
 }
 

@@ -128,8 +128,20 @@ impl VMInitializer {
 }
 
 // This struct is used to record file-backed memory type.
-#[derive(Debug, Clone)]
-pub struct FileBacked {
+#[derive(Clone)]
+pub struct FileBacked(Arc<SgxMutex<FileBackedInner>>);
+
+impl Debug for FileBacked {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("FileBacked")
+            .field("file", &self.file_ref())
+            .field("offset", &self.offset())
+            .field("write_back", &self.need_write_back())
+            .finish()
+    }
+}
+
+pub struct FileBackedInner {
     file: FileRef,
     offset: usize,
     write_back: bool,
@@ -137,36 +149,39 @@ pub struct FileBacked {
 
 impl FileBacked {
     pub fn new(file: FileRef, offset: usize, write_back: bool) -> Self {
-        Self {
+        let inner = FileBackedInner {
             file,
             offset,
             write_back,
-        }
+        };
+
+        Self(Arc::new(SgxMutex::new(inner)))
     }
 
-    pub fn file_ref(&self) -> &FileRef {
-        &self.file
+    pub fn file_ref(&self) -> FileRef {
+        self.0.lock().unwrap().file.clone()
     }
 
     pub fn offset(&self) -> usize {
-        self.offset
+        self.0.lock().unwrap().offset
     }
 
-    pub fn set_offset(&mut self, offset: usize) {
-        self.offset = offset;
+    pub fn set_offset(&self, offset: usize) {
+        self.0.lock().unwrap().offset = offset;
     }
 
     pub fn need_write_back(&self) -> bool {
-        self.write_back
+        self.0.lock().unwrap().write_back
     }
 
-    pub fn init_file(&self) -> (&FileRef, usize) {
-        (&self.file, self.offset)
+    pub fn init_file(&self) -> (FileRef, usize) {
+        (self.file_ref(), self.offset())
     }
 
-    pub fn writeback_file(&self) -> Option<(&FileRef, usize)> {
-        if self.write_back {
-            Some((&self.file, self.offset))
+    pub fn writeback_file(&self) -> Option<(FileRef, usize)> {
+        let inner = self.0.lock().unwrap();
+        if inner.write_back {
+            Some((inner.file.clone(), inner.offset))
         } else {
             None
         }
