@@ -255,6 +255,10 @@ impl EPC {
 }
 
 pub fn commit_epc_for_user_space(start_addr: usize, size: usize) -> Result<()> {
+    info!(
+        "commit epc: {:?}",
+        VMRange::new_with_size(start_addr, size).unwrap()
+    );
     let ret = unsafe { sgx_mm_commit(start_addr as *mut c_void, size) };
     if ret != 0 {
         return_errno!(Errno::from(ret as u32), "commit memory failure");
@@ -333,9 +337,9 @@ pub fn enclave_page_fault_handler(exception_info: sgx_misc_exinfo_t) -> Result<(
         )
     };
 
-    // let internal_manager = USER_SPACE_VM_MANAGER.internal();
-    // internal_manager.handle_page_fault(pf_addr, false)?;
-    USER_SPACE_VM_MANAGER.handle_page_fault(pf_addr, false)?;
+    let internal_manager = USER_SPACE_VM_MANAGER.internal();
+    internal_manager.handle_page_fault(pf_addr, false)?;
+    // USER_SPACE_VM_MANAGER.handle_page_fault(pf_addr, false)?;
 
     info!("Done page fault handle success!");
 

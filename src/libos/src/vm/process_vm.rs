@@ -129,8 +129,8 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
             .size(heap_layout.size())
             .align(heap_layout.align())
             .perms(VMPerms::READ | VMPerms::WRITE)
-            .page_policy(PagePolicy::CommitOnDemand)
-            // .page_policy(PagePolicy::CommitNow)
+            // .page_policy(PagePolicy::CommitOnDemand)
+            .page_policy(PagePolicy::CommitNow)
             .build()
             .map_err(|e| {
                 &self.handle_error_when_init(&chunks);
@@ -523,6 +523,13 @@ impl ProcessVM {
             }
         };
         let page_policy = {
+            // let target = "COMMIT NOW";
+            // if size == 1331456 || size == 1864736 || size == 16656 || size == 2977696 || size == 2191360 || size == 44000 || size == 600368
+            // // || size == 656136
+            // {
+            //     info!("test mmap size = {:?}", target);
+            //     PagePolicy::CommitNow
+            // } else
             if flags.contains(MMapFlags::MAP_STACK) {
                 PagePolicy::CommitNow
             } else {
