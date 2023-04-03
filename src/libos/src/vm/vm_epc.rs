@@ -260,9 +260,10 @@ pub fn commit_epc_for_user_space(start_addr: usize, size: usize) -> Result<()> {
         VMRange::new_with_size(start_addr, size).unwrap()
     );
     let ret = unsafe { sgx_mm_commit(start_addr as *mut c_void, size) };
-    if ret != 0 {
-        return_errno!(Errno::from(ret as u32), "commit memory failure");
-    }
+    // if ret != 0 {
+    //     return_errno!(Errno::from(ret as u32), "commit memory failure");
+    // }
+    assert!(ret == 0);
 
     Ok(())
 }

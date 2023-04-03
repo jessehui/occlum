@@ -35,7 +35,8 @@ pub enum VMInitializer {
 
 impl Default for VMInitializer {
     fn default() -> VMInitializer {
-        VMInitializer::DoNothing()
+        // VMInitializer::DoNothing()
+        VMInitializer::FillZeros()
     }
 }
 
@@ -44,14 +45,17 @@ impl VMInitializer {
         match self {
             VMInitializer::DoNothing() | VMInitializer::ElfSpecific { .. } => {
                 // Do nothing
+                for b in buf {
+                    *b = 0;
+                }
             }
             VMInitializer::FillZeros() => {
                 // If this is the first time commit, no need to reset zeros.
-                if !first_time_commit {
+                // if !first_time_commit {
                     for b in buf {
                         *b = 0;
                     }
-                }
+                // }
             }
             VMInitializer::CopyFrom { range } => {
                 let src_slice = unsafe { range.as_slice() };

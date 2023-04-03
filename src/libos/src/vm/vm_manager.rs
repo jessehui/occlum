@@ -536,7 +536,7 @@ impl VMManager {
 pub struct InternalVMManager {
     chunks: BTreeSet<ChunkRef>, // track in-use chunks, use B-Tree for better performance and simplicity (compared with red-black tree)
     fast_default_chunks: Vec<ChunkRef>, // empty default chunks
-    free_manager: VMFreeSpaceManager,
+    pub free_manager: VMFreeSpaceManager,
     gaps: Vec<ChunkRef>, // Memory gaps that shouldn't be accessed by users
 }
 
@@ -657,16 +657,17 @@ impl InternalVMManager {
         //     // Reset memory permissions
         //     if !intersection_vma.perms().is_default() || intersection_vma.need_reset_perms() {
         //         // let force = true;
-        //         intersection_vma.modify_protection(
+        //         intersection_vma.modify_protection_force(
         //             &intersection_vma,
-        //             intersection_vma.perms(),
+        //             // intersection_vma.perms(),
         //             VMPerms::default(),
         //             // force,
         //         );
         //     }
 
         //     // File-backed VMA needs to be flushed upon munmap
-        //     ChunkManager::flush_file_vma(&intersection_vma);
+        //     // ChunkManager::flush_file_vma(&intersection_vma);
+        //     intersection_vma.flush_file_vma();
 
         //     // Reset to zero
         //     unsafe {
@@ -674,7 +675,7 @@ impl InternalVMManager {
         //         buf.iter_mut().for_each(|b| *b = 0)
         //     }
         // }
-        intersection_vma.flush_memory();
+        intersection_vma.flush_memory()?;
 
         let mut new_vmas = vma.subtract(&intersection_vma);
         let current = current!();
@@ -790,6 +791,12 @@ impl InternalVMManager {
                         new_perms,
                         DUMMY_CHUNK_PROCESS_ID,
                     );
+                    // let mut new_vma = {
+                    //     let file = FileBacked::new()
+                    //     VMArea::new_file_backed_vma(
+                    //     protect_range, new_perms,
+                    //     )
+                    // };
                     new_vma.modify_permissions_for_committed_pages(old_perms, new_perms, false);
 
                     let remaining_old_vma = {

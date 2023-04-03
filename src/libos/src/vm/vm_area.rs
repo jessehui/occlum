@@ -5,6 +5,8 @@ use super::vm_perms::VMPerms;
 use super::vm_range::VMRange;
 use super::vm_util::{FileBacked, PagePolicy, VMMapOptions};
 use super::*;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use super::vm_epc::EPC;
 use intrusive_collections::rbtree::{Link, RBTree};
@@ -90,9 +92,24 @@ impl VMArea {
         new_perms: VMPerms,
         pid: pid_t,
     ) -> Self {
+        info!("inherits file from vma: {:?}", vma);
+        warn!("new range = {:?}", new_range);
         let (new_backed_file, new_initializer) = if let Some(file) = &vma.file_backed {
             let mut new_file = file.clone();
             let file_offset = file.offset();
+
+            {
+                let initializer = vma.initializer.as_ref().unwrap();
+                match initializer {
+                    VMInitializer::FileBacked { file } => {
+                        debug_assert!(file_offset == file.offset());
+                    }
+                    VMInitializer::ElfSpecific { elf_file } => {
+
+                    }
+                    _=> unreachable!()
+                }
+            }
 
             let new_file_offset = if vma.start() < new_range.start() {
                 let vma_offset = new_range.start() - vma.start();
@@ -103,6 +120,7 @@ impl VMArea {
                 file_offset - vma_offset
             };
 
+            info!("new file offset = {:?}", new_file_offset);
             new_file.set_offset(new_file_offset);
             let new_initializer = Some(VMInitializer::FileBacked {
                 file: new_file.clone(),
@@ -113,13 +131,18 @@ impl VMArea {
                 VMInitializer::DoNothing() | VMInitializer::FillZeros() => {
                     (None, vma.initializer.clone())
                 }
+                // TODO: Verify this branch
+                // VMInitializer::CopyFrom{range} => {
+                //     (None, vma.initializer.clone())
+                // }
                 _ => {
-                    panic!()
+                    todo!()
                 }
             }
         } else {
             (None, None)
         };
+        debug_assert!(vma.range.is_superset_of(&new_range));
 
         Self::new(
             new_range,
@@ -178,6 +201,7 @@ impl VMArea {
     }
 
     pub fn init_memory(mut self, options: &VMMapOptions) -> Result<Self> {
+        info!("init_memory");
         let mut first_time_commit = false;
         let mut vm_area = self;
         let page_policy = options.page_policy();
@@ -185,19 +209,29 @@ impl VMArea {
         // Commit pages if needed
         if !vm_area.is_fully_committed() && page_policy == &PagePolicy::CommitNow {
             vm_area.pages_mut().commit_current_vma(true)?;
+            vm_area.modify_protection_force(&vm_area, VMPerms::default());
+            let buf = unsafe { vm_area.as_slice_mut() };
+            unsafe {
+                buf.iter_mut().for_each(|b| *b = 0);
+            }
             vm_area.pages = None;
             first_time_commit = true;
         }
 
         // let start = vm_area.start() + 0x2b000;
         // if *options.size() == 0xa1000 {
-        //     vm_area.pages_mut().commit_range_for_current_vma(&VMRange::new_with_size(start, 0x1000).unwrap());
+        //    vm_area.pages_mut().commit_range_for_current_vma(&VMRange::new_with_size(start, 0x1000).unwrap());
         // }
 
         // Initialize committed memory
         if vm_area.is_partially_committed() {
             vm_area.init_committed_memory()?;
         } else if vm_area.is_fully_committed() {
+            // let buf = unsafe { vm_area.as_slice_mut() };
+            // unsafe {
+            //     buf.iter_mut().for_each(|b| *b = 0);
+            // }
+            // vm_area.modify_protection_force(&vm_area, VMPerms::default());
             // Initialize the memory of the new range
             unsafe {
                 info!("vma is fuuly committed");
@@ -215,10 +249,12 @@ impl VMArea {
                 );
             }
         }
+        vm_area.dump_committed_mem();
         Ok(vm_area)
     }
 
     pub fn flush_memory(&self) -> Result<()> {
+        return Ok(());
         if self.is_partially_committed() {
             return self.flush_committed_memory();
         }
@@ -302,7 +338,7 @@ impl VMArea {
         }
         // TODO: Decide if the PF is triggered by non-committed page or protection violation
         if self.is_reserved_only() {
-            let commit_size = self.commit_once_for_page_fault(pf_addr)?;
+            let commit_size = self.commit_once_for_page_fault(pf_addr).unwrap();
             debug_assert!(commit_size != 0);
             return Ok(());
         }
@@ -312,11 +348,13 @@ impl VMArea {
             return self.page_fault_handler_extend_permission(pf_addr);
         }
 
-        let commit_size = self.commit_once_for_page_fault(pf_addr)?;
+        let commit_size = self.commit_once_for_page_fault(pf_addr).unwrap();
         if commit_size == 0 {
             info!("commit_size = 0, try extend permission");
             return self.page_fault_handler_extend_permission(pf_addr);
         }
+
+        self.dump_committed_mem();
 
         info!("page fault handle success");
 
@@ -379,9 +417,9 @@ impl VMArea {
         self.pages = pages;
 
         if let Some(file) = self.file_backed.as_mut() {
-            if !file.need_write_back() {
-                return;
-            }
+            // if !file.need_write_back() {
+            //     return;
+            // }
             // If the updates to the VMA needs to write back to a file, then the
             // file offset must be adjusted according to the new start address.
             let offset = file.offset();
@@ -391,6 +429,23 @@ impl VMArea {
                 // The caller must guarantee that the new start makes sense
                 debug_assert!(offset >= old_start - new_start);
                 file.set_offset(offset - (old_start - new_start));
+            }
+        }
+
+        if let Some(initializer) = self.initializer.as_mut() {
+            match initializer {
+                VMInitializer::FileBacked { file } => {
+                    let offset = file.offset();
+                    if old_start < new_start {
+                        file.set_offset(offset + (new_start - old_start));
+                    } else {
+                        // The caller must guarantee that the new start makes sense
+                        debug_assert!(offset >= old_start - new_start);
+                        file.set_offset(offset - (old_start - new_start));
+                    }
+                }
+                VMInitializer::DoNothing() | VMInitializer::FillZeros() => {}
+                _ => todo!()
             }
         }
     }
@@ -469,7 +524,7 @@ impl VMArea {
         }
     }
 
-    fn need_reset_perms(&self) -> bool {
+    pub fn need_reset_perms(&self) -> bool {
         if let Some(lazy_perms) = self.lazy_extend_perms {
             // If the lazy_extend_perms(which is the old perm) is less than R/W,
             // then we need to reset the perms for memory cleaning.
@@ -530,7 +585,7 @@ impl VMArea {
         }
     }
 
-    fn modify_protection_force(
+    pub fn modify_protection_force(
         &self,
         protect_range: &VMRange,
         // old_perms: VMPerms,
@@ -592,7 +647,7 @@ impl VMArea {
                     info!("file offset = {:?}, read len = {:?}", file_offset, len);
                     info!("range offset = {:?}", range.start() - vm_range_start);
                     info!("file total size = {:?}", file_size);
-                    eprintln!("buf = {:?}", buf);
+                    // eprintln!("buf = {:?}", buf);
 
                     // for b in &mut buf[len..] {
                     //     *b = 0;
@@ -632,14 +687,21 @@ impl VMArea {
         let committed = true;
         for range in self.pages().get_ranges(committed) {
             info!("init committed memory: {:?}", range);
+            self.modify_protection_force(&range, VMPerms::default());
+            let buf = unsafe { range.as_slice_mut() };
+            unsafe {
+                buf.iter_mut().for_each(|b| *b = 0);
+            }
             self.init_committed_memory_internal(&range, false)?;
         }
 
         Ok(())
     }
 
-    fn flush_committed_memory(&self) -> Result<()> {
+    pub fn flush_committed_memory(&self) -> Result<()> {
         debug_assert!(self.is_partially_committed());
+        info!("flush committed memory");
+        self.dump_committed_mem();
         let (need_flush, file, file_offset) = match self.writeback_file() {
             None => (false, None, None),
             Some((file, offset)) => {
@@ -732,6 +794,9 @@ impl VMArea {
             self.pages = None;
         }
 
+        // if self.size() == 0x33000 {
+        // }
+
         Ok(total_commit_size)
     }
 
@@ -759,6 +824,32 @@ impl VMArea {
                 .modify_protection(range.start(), range.size(), permission);
         }
 
+        Ok(())
+    }
+
+    fn dump_committed_mem(&self) -> Result<()> {
+        info!("dump committed memory");
+        if !self.is_fully_committed() {
+            let committed_ranges = self.pages().get_ranges(true);
+            for range in committed_ranges.iter() {
+                info!("committed range = {:?}", range);
+                let buf = unsafe{range.as_slice()};
+                let mut s = DefaultHasher::new();
+                buf.hash(&mut s);
+                let hash = s.finish();
+                eprintln!("committed buf hash = {:?}", hash);
+            }
+        } else {
+            return Ok(());
+            let buf = unsafe{self.as_slice()};
+            let i = buf.iter().find(|&b| *b != 0);
+            if i.is_some() {
+                eprintln!("fully committed buf = {:?}", buf);
+            } else {
+                info!("range {:?} all zeros", self.range());
+            }
+        }
+        
         Ok(())
     }
 }
