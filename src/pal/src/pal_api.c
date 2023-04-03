@@ -27,8 +27,10 @@ int occlum_pal_get_version(void) {
 
 int pal_run_init_process() {
     const char *init_path = "/bin/init";
-    const char *init_argv[2] = {
+    const char *init_argv[4] = {
         "init",
+        "--initialize-insecure",
+        "--user=root",
         NULL,
     };
     struct occlum_stdio_fds init_io_fds = {

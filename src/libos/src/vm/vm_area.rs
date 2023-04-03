@@ -756,11 +756,11 @@ impl VMArea {
                 }
             }
 
-            if range.size() + total_commit_size > COMMIT_ONCE_SIZE {
-                trace!("before resize, target range = {:?}", range);
-                range.resize(COMMIT_ONCE_SIZE - total_commit_size);
-                trace!("after resize, target range = {:?}", range);
-            }
+            // if range.size() + total_commit_size > COMMIT_ONCE_SIZE {
+            //     trace!("before resize, target range = {:?}", range);
+            //     range.resize(COMMIT_ONCE_SIZE - total_commit_size);
+            //     trace!("after resize, target range = {:?}", range);
+            // }
 
             // Commit memory
             self.pages
