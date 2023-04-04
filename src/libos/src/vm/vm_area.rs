@@ -121,14 +121,11 @@ impl VMArea {
             });
             (Some(new_file), new_initializer)
         } else if let Some(initializer) = &vma.initializer {
+            warn!("initializer = {:?}", initializer);
             match initializer {
                 VMInitializer::DoNothing() | VMInitializer::FillZeros() => {
                     (None, vma.initializer.clone())
                 }
-                // TODO: Verify this branch
-                // VMInitializer::CopyFrom{range} => {
-                //     (None, vma.initializer.clone())
-                // }
                 _ => {
                     todo!()
                 }
@@ -210,12 +207,12 @@ impl VMArea {
             first_time_commit = true;
         }
 
-        let start = vm_area.start() + 0x2b000;
-        if *options.size() == 0xa1000 {
-            vm_area
-                .pages_mut()
-                .commit_range_for_current_vma(&VMRange::new_with_size(start, 0x1000).unwrap());
-        }
+        // let start = vm_area.start() + 0x2b000;
+        // if *options.size() == 0xa1000 {
+        //     vm_area
+        //         .pages_mut()
+        //         .commit_range_for_current_vma(&VMRange::new_with_size(start, 0x1000).unwrap());
+        // }
 
         // Initialize committed memory
         if vm_area.is_partially_committed() {
@@ -237,6 +234,8 @@ impl VMArea {
                     page_policy == &PagePolicy::CommitNow,
                 );
             }
+
+            vm_area.initializer = None;
         }
         // vm_area.dump_committed_mem();
         Ok(vm_area)
@@ -756,11 +755,11 @@ impl VMArea {
                 }
             }
 
-            // if range.size() + total_commit_size > COMMIT_ONCE_SIZE {
-            //     trace!("before resize, target range = {:?}", range);
-            //     range.resize(COMMIT_ONCE_SIZE - total_commit_size);
-            //     trace!("after resize, target range = {:?}", range);
-            // }
+            if range.size() + total_commit_size > COMMIT_ONCE_SIZE {
+                trace!("before resize, target range = {:?}", range);
+                range.resize(COMMIT_ONCE_SIZE - total_commit_size);
+                trace!("after resize, target range = {:?}", range);
+            }
 
             // Commit memory
             self.pages

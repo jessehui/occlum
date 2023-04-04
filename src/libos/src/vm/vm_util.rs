@@ -282,7 +282,19 @@ impl VMMapOptionsBuilder {
             Some(initializer) => initializer.clone(),
             None => VMInitializer::default(),
         };
-        let page_policy = self.page_policy.unwrap_or_default();
+        let page_policy = {
+            match &initializer {
+                VMInitializer::CopyFrom { range } => PagePolicy::CommitNow,
+                VMInitializer::CopyOldAndReadNew {
+                    old_range,
+                    file,
+                    offset,
+                    new_writeback_file,
+                } => PagePolicy::CommitNow,
+                _ => self.page_policy.unwrap_or_default(),
+            }
+        };
+        // let page_policy = self.page_policy.unwrap_or_default();
         Ok(VMMapOptions {
             size,
             align,
