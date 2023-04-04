@@ -310,7 +310,15 @@ impl PageTracker {
         }
 
         // Commit EPC
-        vm_epc::commit_epc_for_user_space(self.range().start(), self.range().size())?;
+        if self.is_reserved_only() {
+            vm_epc::commit_epc_for_user_space(self.range().start(), self.range().size()).unwrap();
+        } else {
+            debug_assert!(self.is_partially_committed());
+            let uncommitted_ranges = self.get_ranges(false);
+            for range in uncommitted_ranges {
+                vm_epc::commit_epc_for_user_space(range.start(), range.size()).unwrap();
+            }
+        }
 
         // Update the tracker
         self.inner.fill(true);
@@ -464,7 +472,7 @@ impl PageTracker {
         }
     }
 
-    // Commit pages for page tracker itself. This is common method for both VMATracker and GlobalTracker.
+    // Commit pages for page tracker itself. This is a common method for both VMATracker and GlobalTracker.
     fn commit_pages_internal(&mut self, start_addr: usize, size: usize) {
         debug_assert!(self.type_ != TrackerType::GapTracker);
         if self.fully_committed {
@@ -475,6 +483,7 @@ impl PageTracker {
             let range = VMRange::new_with_size(start_addr, size).unwrap();
             self.range.intersect(&range)
         } {
+            warn!("commit for page tracker: {:?}", self);
             trace!("commit_pages intersection range = {:?}", intersection_range);
             let page_start_id = (intersection_range.start() - self.range().start()) / PAGE_SIZE;
             let page_num = intersection_range.size() / PAGE_SIZE;

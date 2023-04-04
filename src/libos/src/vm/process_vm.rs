@@ -130,6 +130,7 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
             .align(heap_layout.align())
             .perms(VMPerms::READ | VMPerms::WRITE)
             .page_policy(PagePolicy::CommitOnDemand)
+            // .page_policy(PagePolicy::CommitNow)
             .build()
             .map_err(|e| {
                 &self.handle_error_when_init(&chunks);
@@ -521,7 +522,17 @@ impl ProcessVM {
                 }
             }
         };
-        let page_policy = PagePolicy::CommitOnDemand;
+
+        let page_policy = {
+            if flags.contains(MMapFlags::MAP_STACK) {
+                // With MAP_STACK, the mmaped memory will be used as user's stack. If not committed, the PF can occurs
+                // when switching to user space and can hardly be handled correctly.
+                PagePolicy::CommitNow
+            } else {
+                PagePolicy::CommitOnDemand
+                // PagePolicy::CommitNow
+            }
+        };
         let mmap_options = VMMapOptionsBuilder::default()
             .size(size)
             .addr(addr_option)
