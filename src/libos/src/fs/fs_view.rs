@@ -180,7 +180,7 @@ impl FsView {
 
     /// Lookup INode from the cwd of the process, dereference symlink
     pub fn lookup_inode(&self, path: &str) -> Result<Arc<dyn INode>> {
-        debug!("lookup_inode: cwd: {:?}, path: {:?}", self.cwd(), path);
+        // debug!("lookup_inode: cwd: {:?}, path: {:?}", self.cwd(), path);
         if path.len() > 0 && path.as_bytes()[0] == b'/' {
             // absolute path
             let abs_path = path.trim_start_matches('/');

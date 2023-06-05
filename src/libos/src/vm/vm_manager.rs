@@ -22,20 +22,26 @@ use std::ops::Bound::{Excluded, Included};
 #[derive(Debug)]
 pub struct VMManager {
     range: VMRange,
+    gap_range: Option<VMRange>,
     internal: SgxMutex<InternalVMManager>,
 }
 
 impl VMManager {
-    pub fn init(vm_range: VMRange) -> Result<Self> {
-        let internal = InternalVMManager::init(vm_range.clone());
+    pub fn init(vm_range: VMRange, gap_range: Option<VMRange>) -> Result<Self> {
+        let mut internal = InternalVMManager::init(vm_range.clone(), &gap_range);
         Ok(VMManager {
             range: vm_range,
+            gap_range: gap_range,
             internal: SgxMutex::new(internal),
         })
     }
 
     pub fn range(&self) -> &VMRange {
         &self.range
+    }
+
+    pub fn gap_range(&self) -> &Option<VMRange> {
+        &self.gap_range
     }
 
     pub fn internal(&self) -> SgxMutexGuard<InternalVMManager> {
@@ -56,8 +62,15 @@ impl VMManager {
     }
 
     pub fn verified_clean_when_exit(&self) -> bool {
+        let gap_size = if let Some(gap) = self.gap_range() {
+            gap.size()
+        } else {
+            0
+        };
+
         let internal = self.internal();
-        internal.chunks.len() == 0 && internal.free_manager.free_size() == self.range.size()
+        internal.chunks.len() == 0
+            && internal.free_manager.free_size() + gap_size == self.range.size()
     }
 
     pub fn free_chunk(&self, chunk: &ChunkRef) {
@@ -329,6 +342,7 @@ impl VMManager {
                 .map(|chunk| chunk.clone())
                 .collect::<Vec<_>>();
 
+            info!("intersect chunks = {:?}", chunks);
             // In the heap area, there shouldn't be any default chunks or chunks owned by other process.
             if chunks
                 .iter()
@@ -341,22 +355,19 @@ impl VMManager {
 
         intersect_chunks.iter().for_each(|chunk| {
             if let ChunkType::SingleVMA(vma) = chunk.internal() {
-                if let Some(intersection_range) = chunk.range().intersect(&reset_range) {
-                    let mut internal_manager = self.internal();
-                    internal_manager.mprotect_single_vma_chunk(
-                        &chunk,
-                        intersection_range,
-                        VMPerms::DEFAULT,
-                    );
-
-                    unsafe {
-                        let buf = intersection_range.as_slice_mut();
-                        buf.iter_mut().for_each(|b| *b = 0)
-                    }
+                let mut vma = vma.lock().unwrap();
+                if let Some(intersection_vma) = vma.intersect(&reset_range) {
+                    intersection_vma.flush_memory().unwrap();
                 }
+                // clear permission for SingleVMA chunk
+                if vma.perms() != VMPerms::DEFAULT {
+                    vma.set_perms(VMPerms::default());
+                }
+            } else {
+                // Currently only used for heap de-allocation. Thus must be SingleVMA chunk.
+                unreachable!()
             }
         });
-
         Ok(())
     }
 
@@ -377,15 +388,16 @@ impl VMManager {
         match chunk.internal() {
             ChunkType::MultiVMA(manager) => {
                 trace!("msync default chunk: {:?}", chunk.range());
-                return manager
+                manager
                     .lock()
                     .unwrap()
                     .chunk_manager_mut()
-                    .msync_by_range(&sync_range);
+                    .msync_by_range(&sync_range)?;
             }
             ChunkType::SingleVMA(vma) => {
                 let vma = vma.lock().unwrap();
-                vma.flush_backed_file();
+                // vma.flush_memory()?;
+                vma.flush_committed_backed_file();
             }
         }
         Ok(())
@@ -408,7 +420,8 @@ impl VMManager {
                 ChunkType::SingleVMA(vma) => {
                     vma.lock()
                         .unwrap()
-                        .flush_backed_file_with_cond(is_same_file);
+                        .flush_committed_backed_file_with_cond(is_same_file);
+                    // vma.lock().unwrap().flush_file_vma_with_cond(is_same_file);
                 }
             });
     }
@@ -518,6 +531,34 @@ impl VMManager {
 
         assert!(mem_chunks.len() == 0);
     }
+
+    pub fn handle_page_fault(
+        &self,
+        rip: usize,
+        pf_addr: usize,
+        errcd: u32,
+        kernel_triggers: bool,
+    ) -> Result<()> {
+        let page_fault_chunk = {
+            let current = current!();
+            let current_process_mem_chunks = current.vm().mem_chunks().read().unwrap();
+            if let Some(page_fault_chunk) = current_process_mem_chunks
+                .iter()
+                .find(|chunk| chunk.range().contains(pf_addr))
+            {
+                Some(page_fault_chunk.clone())
+            } else {
+                None
+            }
+        };
+
+        if let Some(page_fault_chunk) = page_fault_chunk {
+            page_fault_chunk.handle_page_fault(rip, pf_addr, errcd, kernel_triggers)
+        } else {
+            // This can happen for example, when the user intends to trigger the SIGSEGV handler by visit nullptr.
+            return_errno!(ENOMEM, "can't find the chunk containing the address");
+        }
+    }
 }
 
 // Modification on this structure must acquire the global lock.
@@ -531,11 +572,21 @@ pub struct InternalVMManager {
 }
 
 impl InternalVMManager {
-    pub fn init(vm_range: VMRange) -> Self {
+    pub fn init(vm_range: VMRange, gap_range: &Option<VMRange>) -> Self {
         let chunks = BTreeSet::new();
         let fast_default_chunks = Vec::new();
-        let free_manager = VMFreeSpaceManager::new(vm_range);
+        let mut free_manager = VMFreeSpaceManager::new(vm_range);
         let shm_manager = ShmManager::new();
+        if let Some(gap_range) = gap_range {
+            debug_assert!(vm_range.is_superset_of(&gap_range));
+            free_manager
+                .find_free_range_internal(
+                    gap_range.size(),
+                    PAGE_SIZE,
+                    VMMapAddr::Force(gap_range.start()),
+                )
+                .unwrap();
+        }
         Self {
             chunks,
             fast_default_chunks,
@@ -636,19 +687,7 @@ impl InternalVMManager {
             _ => unreachable!(),
         };
 
-        // File-backed VMA needs to be flushed upon munmap
-        intersection_vma.flush_backed_file();
-
-        // Reset memory permissions
-        if !&intersection_vma.perms().is_default() {
-            VMPerms::apply_perms(&intersection_vma, VMPerms::default());
-        }
-
-        // Reset to zero
-        unsafe {
-            let buf = intersection_vma.as_slice_mut();
-            buf.iter_mut().for_each(|b| *b = 0)
-        }
+        intersection_vma.flush_memory()?;
 
         let mut new_vmas = vma.subtract(&intersection_vma);
         let current = current!();
@@ -703,10 +742,11 @@ impl InternalVMManager {
                 self.shm_manager
                     .create_shared_chunk(options, new_chunk.clone())
                     .map_err(|e| {
-                        let vma = new_chunk.get_vma_for_single_vma_chunk();
+                        let mut vma = new_chunk.get_vma_for_single_vma_chunk();
                         // Reset memory permissions
                         if !vma.perms().is_default() {
-                            VMPerms::apply_perms(&vma, VMPerms::default());
+                            // VMPerms::apply_perms(&vma, VMPerms::default());
+                            vma.modify_permissions_for_committed_pages(VMPerms::default())
                         }
                         // Reset memory contents
                         unsafe {
@@ -757,19 +797,23 @@ impl InternalVMManager {
             .munmap_shared_chunk(chunk, munmap_range, force_unmap)?
             == MunmapSharedResult::Freeable
         {
-            let vma = chunk.get_vma_for_single_vma_chunk();
+            {
+                let vma = chunk.get_vma_for_single_vma_chunk();
+                vma.flush_memory()?;
+            }
             // Flush memory contents to backed file
-            vma.flush_backed_file();
-            // Reset memory permissions
-            if !vma.perms().is_default() {
-                VMPerms::apply_perms(&vma, VMPerms::default());
-            }
-            // Reset memory contents
-            unsafe {
-                let buf = vma.as_slice_mut();
-                buf.iter_mut().for_each(|b| *b = 0)
-            }
-            drop(vma);
+            // vma.flush_backed_file();
+            // // Reset memory permissions
+            // if !vma.perms().is_default() {
+            //     // VMPerms::apply_perms(&vma, VMPerms::default());
+            //     vma.modify_permissions_for_committed_pages(VMPerms::default());
+            // }
+            // // Reset memory contents
+            // unsafe {
+            //     let buf = vma.as_slice_mut();
+            //     buf.iter_mut().for_each(|b| *b = 0)
+            // }
+            // drop(vma);
 
             self.free_chunk(chunk);
             let current = current!();
@@ -834,7 +878,6 @@ impl InternalVMManager {
             }
             ChunkType::SingleVMA(vma) => vma,
         };
-
         let mut updated_vmas = {
             let mut containing_vma = vma.lock().unwrap();
             trace!(
@@ -844,7 +887,8 @@ impl InternalVMManager {
             );
             debug_assert!(chunk.range() == containing_vma.range());
 
-            if containing_vma.perms() == new_perms {
+            let old_perms = containing_vma.perms();
+            if old_perms == new_perms {
                 return Ok(());
             }
 
@@ -855,7 +899,7 @@ impl InternalVMManager {
                 (true, true) => {
                     // Exact the same vma
                     containing_vma.set_perms(new_perms);
-                    VMPerms::apply_perms(&containing_vma, containing_vma.perms());
+                    containing_vma.modify_permissions_for_committed_pages(new_perms);
                     return Ok(());
                 }
                 (false, false) => {
@@ -866,14 +910,15 @@ impl InternalVMManager {
 
                     let old_end = containing_vma.end();
                     let old_perms = containing_vma.perms();
+                    trace!("old perms = {:?}", old_perms);
 
-                    let new_vma = VMArea::inherits_file_from(
+                    let mut new_vma = VMArea::inherits_file_from(
                         &containing_vma,
                         protect_range,
                         new_perms,
                         VMAccess::Private(current_pid),
                     );
-                    VMPerms::apply_perms(&new_vma, new_vma.perms());
+                    new_vma.modify_permissions_for_committed_pages(new_perms);
 
                     let remaining_old_vma = {
                         let range = VMRange::new(protect_range.end(), old_end).unwrap();
@@ -886,25 +931,26 @@ impl InternalVMManager {
                     };
 
                     containing_vma.set_end(protect_range.start());
+                    trace!("containing vma = {:?}", containing_vma);
 
                     // Put containing_vma at last to be updated first.
                     let updated_vmas = vec![new_vma, remaining_old_vma, containing_vma.clone()];
                     updated_vmas
                 }
                 _ => {
-                    let new_vma = VMArea::inherits_file_from(
+                    let mut new_vma = VMArea::inherits_file_from(
                         &containing_vma,
                         protect_range,
                         new_perms,
                         VMAccess::Private(current_pid),
                     );
-                    VMPerms::apply_perms(&new_vma, new_vma.perms());
+                    new_vma.modify_permissions_for_committed_pages(new_perms);
 
                     if same_start {
-                        // Protect range is at left side of the cotaining vma
+                        // Protect range is at left side of the containing vma
                         containing_vma.set_start(protect_range.end());
                     } else {
-                        // Protect range is at right side of the cotaining vma
+                        // Protect range is at right side of the containing vma
                         containing_vma.set_end(protect_range.start());
                     }
 
@@ -914,19 +960,16 @@ impl InternalVMManager {
                 }
             }
         };
-
         let current = current!();
         // First update current vma chunk
         if updated_vmas.len() > 1 {
             let update_vma = updated_vmas.pop().unwrap();
             self.update_single_vma_chunk(&current, &chunk, update_vma);
         }
-
         // Then add new chunks if any
         updated_vmas.into_iter().for_each(|vma| {
             self.add_new_chunk(&current, vma);
         });
-
         Ok(())
     }
 
@@ -943,8 +986,8 @@ impl InternalVMManager {
         // Remove from chunks
         self.chunks.remove(chunk);
 
-        // Mprotect the whole chunk to reduce the usage of vma count of host
-        VMPerms::apply_perms(range, VMPerms::DEFAULT);
+        // TODO: Mprotect the whole chunk to reduce the usage of vma count of host
+        // VMPerms::apply_perms(range, VMPerms::DEFAULT);
 
         // Add range back to freespace manager
         self.free_manager.add_range_back_to_free_manager(range);
@@ -1110,6 +1153,7 @@ impl InternalVMManager {
             let perms = options.perms().clone();
             let align = options.align().clone();
             let initializer = options.initializer();
+            let page_policy = options.page_policy();
             target_contained_ranges
                 .iter()
                 .map(|range| {
@@ -1125,6 +1169,7 @@ impl InternalVMManager {
                         .initializer(initializer.clone())
                         .addr(addr)
                         .size(size)
+                        .page_policy(*page_policy)
                         .build()
                         .unwrap()
                 })

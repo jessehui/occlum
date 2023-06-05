@@ -6,6 +6,7 @@ use super::SigNum;
 use crate::prelude::*;
 use crate::syscall::CpuContext;
 use crate::time::clock_t;
+use aligned::{Aligned, A64};
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -208,6 +209,7 @@ pub struct ucontext_t {
     pub uc_mcontext: mcontext_t,
     pub uc_sigmask: sigset_t,
     pub fpregs: [u8; 64 * 8], //fxsave structure
+                              // pub xsave_area: Aligned<A64, [u8; 4096]>,
 }
 
 #[derive(Debug, Clone, Copy)]
