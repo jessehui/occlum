@@ -18,12 +18,69 @@ on:
         description: 'image tag'
         required: true
         default: 'latest'
+      execute_on_self_machine:
+        description: 'if not, delete this field'
+        required: false
+        default: '[self-hosted, SGX2-HW]'
+      execute_on_github_machine:
+        description: 'if not, delete this field'
+        required: false
+        default: 'ubuntu-20.04'
 
 
 jobs:
+  # setup-job:
+  #   runs-on: ubuntu-latest
+  #   outputs:
+  #     running_machine: ${{ env.MACHINE }}
+  #   steps:
+  #     - uses: actions/checkout@v2
+  #     - name: get machine name
+  #       id: get-machine
+  #       run: |
+  #         if [ ${{ github.event.inputs.execute_on_machine }} == 'self-hosted' ]; then
+  #           echo "Build on self-hosted machine"
+  #           echo "MACHINE='[self-hosted, SGX2-HW]'" >> $GITHUB_ENV
+  #         else
+  #           echo "Build on github-hosted machine"
+  #           echo "MACHINE='ubuntu-20.04'" >> $GITHUB_ENV
+  #         fi
+  #       # shell: bash
+  #     - name: Read exported variable
+  #       run: |
+  #         echo "Build on machine: ${{ env.MACHINE }}"
+
   Build_grpc_image:
-    runs-on: ubuntu-20.04
     if: github.event.inputs.image_name == 'grpc'
+    # needs: setup-job
+    runs-on: ${{ matrix.runners }}
+    strategy:
+      matrix:
+        runners: [${{ github.event.inputs.execute_on_self_machine}}, ${{github.event.inputs.execute_on_github_machine}}]
+        #runners: [[self-hosted, SGX2-HW], ubuntu-20.04]
+    # strategy:
+    #   matrix:
+    #     self_runner: [${{ env.MACHINE }}]
+    # strategy:
+    #   matrix:
+    #     running_machine: [[self-hosted, SGX2-HW], ubuntu-20.04]
+    #       # - github_runner: ubuntu-20.04
+    #     exclude:
+    #       - running_machine: ${{ github.event.inputs.execute_on_machine == 'self-hosted' && 'dummy' || "[self-hosted, SGX2-HW]" }}
+    #       - running_machine: ${{ github.event.inputs.execute_on_machine == 'github-hosted' && 'dummy' || "ubuntu-20.04" }}
+    # runs-on: ${{ matrix.running_machine }}
+
+    # strategy:
+    #   matrix:
+    #     running_machine:
+    #       - github_runner: 'ubuntu-20.04'
+    #       - self_runner: '[self-hosted, SGX2-HW]'
+    #     exclude:
+    #       - running_machine: github_runner
+    #           if: github.event.inputs.execute_on_machine == 'self-hosted'
+    #       - running_machine: self_runner
+    #           if: github.event.inputs.execute_on_machine == 'github-hosted'
+    # runs-on: ${{ if github.event.inputs.execute_on_machine == 'github-hosted' 'ubuntu-20.04' else '[self-hosted, SGX2-HW]' }}
 
     steps:
     - name: Checkout code
