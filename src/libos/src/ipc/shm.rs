@@ -381,6 +381,9 @@ impl ShmManager {
         let shmid = if key == IPC_PRIVATE {
             let shmid = self.get_new_shmid()?;
             let shm = ShmSegment::new(shmid, key, size, mode)?;
+            // Add shm to process's mem_chunk list
+            current!().vm().add_mem_chunk(shm.chunk.clone());
+
             shm_segments.insert(shm.shmid, shm);
             shmid
         } else {
@@ -401,6 +404,9 @@ impl ShmManager {
                 }
                 // Check the permission
                 shm.check_perm()?;
+                // Add shm to process's mem_chunk list
+                current!().vm().add_mem_chunk(shm.chunk.clone());
+
                 shm.shmid
             } else {
                 if !shmflg.contains(ShmFlags::IPC_CREAT) {
@@ -408,6 +414,9 @@ impl ShmManager {
                 }
                 let shmid = self.get_new_shmid()?;
                 let shm = ShmSegment::new(shmid, key, size, mode)?;
+                // Add shm to process's mem_chunk list
+                current!().vm().add_mem_chunk(shm.chunk.clone());
+
                 shm_segments.insert(shm.shmid, shm);
                 shmid
             };
@@ -454,6 +463,7 @@ impl ShmManager {
             shm.shm_dtime = ShmManager::current_time();
             shm.shm_lpid = pid;
             shm.shm_remove_pid(&pid)?;
+            current!().vm().remove_mem_chunk(&shm.chunk);
             shm.shm_nattach -= 1;
             if shm.is_destruction() && shm.shm_nattach == 0 {
                 let shmid = shm.shmid;
@@ -481,18 +491,23 @@ impl ShmManager {
     pub fn detach_shm_when_process_exit(&self, thread: &ThreadRef) {
         let pid = &thread.process().pid();
         let mut shm_segments = self.shm_segments.write().unwrap();
-        shm_segments.drain_filter(|shmid, shm| match shm.shm_remove_pid(&pid) {
-            // There exists a shm that has been attached to the current process
-            Ok(_) => {
-                shm.shm_nattach -= 1;
-                if shm.is_destruction() && shm.shm_nattach == 0 {
-                    self.free_shmid(&shmid);
-                    true
-                } else {
-                    false
+        shm_segments.drain_filter(|shmid, shm| {
+            match {
+                current!().vm().remove_mem_chunk(&shm.chunk);
+                shm.shm_remove_pid(&pid)
+            } {
+                // There exists a shm that has been attached to the current process
+                Ok(_) => {
+                    shm.shm_nattach -= 1;
+                    if shm.is_destruction() && shm.shm_nattach == 0 {
+                        self.free_shmid(&shmid);
+                        true
+                    } else {
+                        false
+                    }
                 }
+                Err(_) => false,
             }
-            Err(_) => false,
         });
     }
 

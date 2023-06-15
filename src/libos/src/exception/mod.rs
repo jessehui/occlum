@@ -7,6 +7,7 @@ use super::*;
 use crate::signal::{FaultSignal, SigSet};
 use crate::syscall::exception_interrupt_syscall_c_abi;
 use crate::syscall::{CpuContext, FpRegs, SyscallNum};
+use crate::vm::{enclave_page_fault_handler, USER_SPACE_VM_MANAGER};
 use aligned::{Aligned, A16};
 use core::arch::x86_64::_fxsave;
 use sgx_types::*;
@@ -27,7 +28,34 @@ pub fn register_exception_handlers() {
 
 #[no_mangle]
 extern "C" fn handle_exception(info: *mut sgx_exception_info_t) -> i32 {
-    let mut fpregs = FpRegs::save();
+    let mut fpregs: FpRegs = FpRegs::save();
+    {
+        let info = unsafe { &mut *info };
+        // If it is #PF, but the triggered code is not user's code and the #PF address is in the userspace, then
+        // it is a kernel-triggered #PF that we can handle.
+        if info.exception_vector == sgx_exception_vector_t::SGX_EXCEPTION_VECTOR_PF
+            && !USER_SPACE_VM_MANAGER
+                .range()
+                .contains(info.cpu_context.rip as usize)
+        {
+            // The PF address must be in the user space
+            let pf_addr = info.exinfo.faulting_address as usize;
+            if !USER_SPACE_VM_MANAGER.range().contains(pf_addr) {
+                fpregs.restore();
+                return SGX_MM_EXCEPTION_CONTINUE_SEARCH;
+            } else {
+                // kernel code triggers #PF. This can happen e.g. when read syscall triggers user buffer #PF.
+                info!("kernel code triggers #PF");
+                let kernel_triggers = true;
+                enclave_page_fault_handler(info.exinfo, kernel_triggers)
+                    .expect("handle PF failure");
+                // panic!("handle PF failure");
+                fpregs.restore();
+                return SGX_MM_EXCEPTION_CONTINUE_EXECUTION;
+            }
+        }
+    }
+
     unsafe {
         exception_interrupt_syscall_c_abi(
             SyscallNum::HandleException as u32,
@@ -62,6 +90,18 @@ pub fn do_handle_exception(
         } else if ip_opcode == CPUID_OPCODE {
             return handle_cpuid_exception(user_context);
         }
+    }
+
+    if info.exception_vector == sgx_exception_vector_t::SGX_EXCEPTION_VECTOR_PF {
+        info!("Userspace #PF caught, try handle");
+
+        if enclave_page_fault_handler(info.exinfo, false).is_ok() {
+            info!("#PF handling is done successfully");
+            return Ok(0);
+        }
+
+        info!("user context = {:?}", user_context);
+        warn!("#PF not handled. Turn to signal");
     }
 
     // Then, it must be a "real" exception. Convert it to signal and force delivering it.

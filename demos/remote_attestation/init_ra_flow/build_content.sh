@@ -41,8 +41,10 @@ function build_client_instance()
     rm -rf image
     copy_bom -f ../flask.yaml --root image --include-dir /opt/occlum/etc/template
 
-    new_json="$(jq '.resource_limits.user_space_size = "600MB" |
-        .resource_limits.kernel_space_heap_size = "128MB" |
+    new_json="$(jq '.resource_limits.user_space_size = "1MB" |
+        .resource_limits.user_space_max_size = "600MB" |
+        .resource_limits.kernel_space_heap_size = "1MB" |
+        .resource_limits.kernel_space_heap_max_size = "128MB" |
         .resource_limits.max_num_of_threads = 32 |
         .metadata.debuggable = false |
         .metadata.enable_kss = true |
@@ -108,7 +110,8 @@ function build_server_instance()
         .sgx_mrs[0].config_svn = 1234 |
         .sgx_mrs[0].debuggable = false ' ../ra_config_template.json > dynamic_config.json
 
-    new_json="$(jq '.resource_limits.user_space_size = "500MB" |
+    new_json="$(jq '.resource_limits.user_space_size = "1MB" |
+                    .resource_limits.user_space_max_size = "500MB" |
                     .metadata.debuggable = false ' Occlum.json)" && \
     echo "${new_json}" > Occlum.json
 

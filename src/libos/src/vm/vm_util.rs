@@ -175,6 +175,19 @@ impl VMMapAddr {
     }
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum PagePolicy {
+    ReserveOnly = 0x1,    // Only reserve
+    CommitNow = 0x2,      // Commit all pages when mmap.
+    CommitOnDemand = 0x4, // Reserve space when mmap, commit in the PF handler. This is the default policy.
+}
+
+impl Default for PagePolicy {
+    fn default() -> PagePolicy {
+        PagePolicy::CommitOnDemand
+    }
+}
+
 #[derive(Builder, Debug)]
 #[builder(pattern = "owned", build_fn(skip), no_std)]
 pub struct VMMapOptions {
@@ -183,6 +196,7 @@ pub struct VMMapOptions {
     perms: VMPerms,
     addr: VMMapAddr,
     initializer: VMInitializer,
+    page_policy: PagePolicy,
 }
 
 // VMMapOptionsBuilder is generated automatically, except the build function
@@ -228,12 +242,26 @@ impl VMMapOptionsBuilder {
             Some(initializer) => initializer.clone(),
             None => VMInitializer::default(),
         };
+        let page_policy = {
+            match &initializer {
+                VMInitializer::CopyFrom { range } => PagePolicy::CommitNow,
+                VMInitializer::CopyOldAndReadNew {
+                    old_range,
+                    file,
+                    offset,
+                    new_writeback_file,
+                } => PagePolicy::CommitNow,
+                _ => self.page_policy.unwrap_or_default(),
+            }
+        };
+
         Ok(VMMapOptions {
             size,
             align,
             perms,
             addr,
             initializer,
+            page_policy,
         })
     }
 }
@@ -257,6 +285,10 @@ impl VMMapOptions {
 
     pub fn initializer(&self) -> &VMInitializer {
         &self.initializer
+    }
+
+    pub fn page_policy(&self) -> &PagePolicy {
+        &self.page_policy
     }
 }
 

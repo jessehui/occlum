@@ -67,7 +67,7 @@ jobs:
           "OCCLUM_VERSION=${{ env.OCCLUM_VERSION }}"
           "OCCLUM_BRANCH=${{ env.OCCLUM_BRANCH }}"
         push: true
-        tags: occlumbackup/occlum:${{ github.event.inputs.tag }}-ubuntu20.04-grpc
+        tags: jessehui/occlum:${{ github.event.inputs.tag }}-ubuntu20.04-grpc-edmm
 
 
   Build_gvisor_test_image:
@@ -110,7 +110,7 @@ jobs:
           "OCCLUM_VERSION=${{ env.OCCLUM_VERSION }}"
           "OCCLUM_BRANCH=${{ env.OCCLUM_BRANCH }}"
         push: true
-        tags: occlumbackup/occlum:${{ github.event.inputs.tag }}-ubuntu20.04-gvisor_test
+        tags: jessehui/occlum:${{ github.event.inputs.tag }}-ubuntu20.04-gvisor_test-edmm
 
 
   Build_openvino_image:
@@ -158,7 +158,7 @@ jobs:
           "OCCLUM_VERSION=${{ env.OCCLUM_VERSION }}"
           "OCCLUM_BRANCH=${{ env.OCCLUM_BRANCH }}"
         push: true
-        tags: occlumbackup/occlum:${{ github.event.inputs.tag }}-ubuntu20.04-openvino
+        tags: jessehui/occlum:${{ github.event.inputs.tag }}-ubuntu20.04-openvino-edmm
 
 
   Build_python_image:
@@ -206,7 +206,7 @@ jobs:
           "OCCLUM_VERSION=${{ env.OCCLUM_VERSION }}"
           "OCCLUM_BRANCH=${{ env.OCCLUM_BRANCH }}"
         push: true
-        tags: occlumbackup/occlum:${{ github.event.inputs.tag }}-ubuntu20.04-python
+        tags: jessehui/occlum:${{ github.event.inputs.tag }}-ubuntu20.04-python-edmm
 
 
   # TODO: Add actions to build tf_serving_base image.
@@ -214,10 +214,14 @@ jobs:
   # Thus dividing into two jobs.
 
   Build_tf_serving_image:
-    runs-on: ubuntu-20.04
+    runs-on: [self-hosted, SGX2-HW]
     if: github.event.inputs.image_name == 'tf_serving'
 
     steps:
+    - name: Clean before running
+      run: |
+        sudo chown -R ${{ secrets.CI_ADMIN }} "${{ github.workspace }}"
+
     - name: Checkout code
       uses: actions/checkout@v2
 
@@ -259,4 +263,4 @@ jobs:
           "OCCLUM_VERSION=${{ env.OCCLUM_VERSION }}"
           "OCCLUM_BRANCH=${{ env.OCCLUM_BRANCH }}"
         push: true
-        tags: occlumbackup/occlum:${{ github.event.inputs.tag }}-ubuntu20.04-tf_serving
+        tags: jessehui/occlum:${{ github.event.inputs.tag }}-ubuntu20.04-tf_serving-edmm
