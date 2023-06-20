@@ -369,7 +369,7 @@ trait IntoFsMetadata {
 impl IntoFsMetadata for fs::Metadata {
     fn into_fs_metadata(self) -> Metadata {
         use sgx_trts::libc;
-        use std::os::linux::fs::MetadataExt;
+        use std::os::fs::MetadataExt;
         Metadata {
             dev: self.st_dev() as usize,
             inode: self.st_ino() as usize,
