@@ -174,7 +174,6 @@ pub struct ConfigMountOptions {
     pub mac: Option<sgx_aes_gcm_128bit_tag_t>,
     pub layers: Option<Vec<ConfigMount>>,
     pub temporary: bool,
-    pub cache_size: Option<u64>,
     pub index: u32,
 }
 
@@ -313,16 +312,10 @@ impl ConfigMountOptions {
         } else {
             None
         };
-        let cache_size = if input.cache_size.is_some() {
-            Some(parse_memory_size(input.cache_size.as_ref().unwrap())? as _)
-        } else {
-            None
-        };
         Ok(ConfigMountOptions {
             mac,
             layers,
             temporary: input.temporary,
-            cache_size,
             index: input.index,
         })
     }
@@ -458,8 +451,6 @@ struct InputConfigMountOptions {
     pub layers: Option<Vec<InputConfigMount>>,
     #[serde(default)]
     pub temporary: bool,
-    #[serde(default)]
-    pub cache_size: Option<String>,
     #[serde(default)]
     pub index: u32,
 }

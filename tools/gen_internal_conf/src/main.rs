@@ -186,10 +186,7 @@ fn main() {
                 heap_max_size
             } else {
                 // If the user doesn't provide a value, use the max value as heap_max_size.
-                std::cmp::max(
-                    heap_init_size,
-                    parse_memory_size(DEFAULT_CONFIG.kernel_heap_max_size),
-                )
+                std::cmp::max(heap_init_size, parse_memory_size(DEFAULT_CONFIG.kernel_heap_max_size))
             }
         };
 
@@ -539,8 +536,6 @@ struct OcclumMountOptions {
     pub layers: Option<Vec<OcclumMount>>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub temporary: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cache_size: Option<String>,
 }
 
 #[inline]
