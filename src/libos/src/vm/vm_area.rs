@@ -379,21 +379,9 @@ impl VMArea {
 
         self.range.set_start(new_start);
 
-        // let pages = {
-        //     // TODO: Find a O(1) method to set start
-        //     let pages = PageTracker::new_vma_tracker(&self.range, &self.epc_type).unwrap();
-        //     if pages.is_fully_committed() {
-        //         None
-        //     } else {
-        //         Some(pages)
-        //     }
-        // };
-        // self.pages = pages;
-
         if new_start < old_start {
             // Extend this VMA
             let pages = {
-                // TODO: Find a O(1) method to set start
                 let pages = PageTracker::new_vma_tracker(&self.range, &self.epc_type).unwrap();
                 if pages.is_fully_committed() {
                     None
@@ -403,6 +391,7 @@ impl VMArea {
             };
             self.pages = pages;
         } else {
+            // Split this VMA
             debug_assert!(new_start > old_start);
             if let Some(pages) = &mut self.pages {
                 pages.split_from_new_start(new_start);
@@ -556,20 +545,20 @@ impl VMArea {
                     } else {
                         trace!("reduce perms");
                         // For protection reduction, do it right now.
-                        user_region.modify_protection(
-                            protect_range.start(),
-                            protect_range.size(),
-                            new_perms,
-                        );
+                        user_region
+                            .modify_protection(
+                                protect_range.start(),
+                                protect_range.size(),
+                                new_perms,
+                            )
+                            .unwrap();
                     }
                 }
             }
             EPC::ReservedMem(reserved_mem) => {
-                reserved_mem.modify_protection(
-                    protect_range.start(),
-                    protect_range.size(),
-                    new_perms,
-                );
+                reserved_mem
+                    .modify_protection(protect_range.start(), protect_range.size(), new_perms)
+                    .unwrap();
             }
             _ => unreachable!(),
         }
@@ -799,7 +788,7 @@ impl VMArea {
             }
 
             self.epc_type
-                .modify_protection(range.start(), range.size(), permission);
+                .modify_protection(range.start(), range.size(), permission)?;
         }
 
         Ok(())

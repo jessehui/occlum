@@ -346,6 +346,9 @@ impl VMManager {
                 if vma.perms() != VMPerms::DEFAULT {
                     vma.set_perms(VMPerms::default());
                 }
+            } else {
+                // Currently only used for heap de-allocation. Thus must be SingleVMA chunk.
+                unreachable!()
             }
         });
         Ok(())
@@ -518,7 +521,7 @@ impl VMManager {
         {
             page_fault_chunk.handle_page_fault(pf_addr, kernel_triggers)
         } else {
-            // This can happen for example, when the user intends to trigger the SIGSEGV handler by visit address 0.
+            // This can happen for example, when the user intends to trigger the SIGSEGV handler by visit nullptr.
             return_errno!(ENOMEM, "can't find the chunk containing the address");
         }
     }
@@ -530,7 +533,7 @@ impl VMManager {
 pub struct InternalVMManager {
     chunks: BTreeSet<ChunkRef>, // track in-use chunks, use B-Tree for better performance and simplicity (compared with red-black tree)
     fast_default_chunks: Vec<ChunkRef>, // empty default chunks
-    pub free_manager: VMFreeSpaceManager,
+    free_manager: VMFreeSpaceManager,
     gaps: Vec<ChunkRef>, // Memory gaps that shouldn't be accessed by users
 }
 

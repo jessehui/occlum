@@ -49,7 +49,6 @@ extern "C" fn handle_exception(info: *mut sgx_exception_info_t) -> i32 {
                 let kernel_triggers = true;
                 enclave_page_fault_handler(info.exinfo, kernel_triggers)
                     .expect("handle PF failure");
-                // panic!("handle PF failure");
                 fpregs.restore();
                 return SGX_MM_EXCEPTION_CONTINUE_EXECUTION;
             }
@@ -100,8 +99,10 @@ pub fn do_handle_exception(
             return Ok(0);
         }
 
-        info!("user context = {:?}", user_context);
-        warn!("#PF not handled. Turn to signal");
+        warn!(
+            "#PF not handled. Turn to signal. user context = {:?}",
+            user_context
+        );
     }
 
     // Then, it must be a "real" exception. Convert it to signal and force delivering it.

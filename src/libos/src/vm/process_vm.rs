@@ -538,8 +538,9 @@ impl ProcessVM {
         let page_policy = {
             if flags.contains(MMapFlags::MAP_STACK) {
                 // With MAP_STACK, the mmaped memory will be used as user's stack. If not committed, the PF can occurs
-                // when switching to user space and can hardly be handled correctly.
+                // when switching to user space and can't be handled correctly by us.
                 PagePolicy::CommitNow
+            // For test only:
             // } else if flags.contains(MMapFlags::MAP_ANONYMOUS) {
             //     PagePolicy::CommitNow
             } else {
