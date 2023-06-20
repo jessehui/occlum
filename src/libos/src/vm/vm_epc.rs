@@ -5,8 +5,11 @@ use modular_bitfield::{
     bitfield,
     specifiers::{B1, B13, B16},
 };
+use sgx_trts::emm::{
+    AllocAddr, AllocFlags, AllocOptions, EmmAlloc, HandleResult, PageFaultHandler, Perm,
+};
 use sgx_trts::enclave::rsgx_is_supported_EDMM;
-use std::ptr;
+use std::ptr::NonNull;
 
 // Memory Layout for Platforms with EDMM support
 //
@@ -19,124 +22,43 @@ use std::ptr;
 
 pub enum SGXPlatform {
     WithEDMM,
-    WithoutEDMM,
-    Simulation,
-}
-
-// struct MixedMem {
-//     gap_range: VMRange,
-//     valid_mem_type: EPC,
-//     valid_mem_range: VMRange,
-// }
-
-// impl MixedMem {
-//     fn new(gap_range: VMRange, valid_mem_type: EPC, valid_mem_range: VMRange) -> Self {
-//         Self {
-//             gap_range, valid_mem_type, valid_mem_range,
-//         }
-//     }
-// }
-
-#[derive(Clone)]
-pub enum EPC {
-    ReservedMem(ReservedMem),
-    UserRegionMem(UserRegionMem),
-    GapMem,
-    // Mixed(MixedMem), // The Epc could be mixed with ReservedMem and GapMem or GapMem with UserRegionMem
-}
-
-impl SGXPlatform {
-    pub fn new() -> Self {
-        if rsgx_is_supported_EDMM() {
-            SGXPlatform::WithEDMM
-        } else {
-            // SGXPlatform::WithoutEDMM
-            SGXPlatform::Simulation
-        }
-    }
-
-    pub fn alloc_user_space(
-        &self,
-        init_size: usize,
-        max_size: usize,
-    ) -> Result<(VMRange, VMRange)> {
-        match self {
-            SGXPlatform::WithEDMM => {
-                let user_region_size = max_size - init_size;
-
-                let reserved_mem_start_addr = ReservedMem::alloc(init_size)?;
-
-                let user_region_start_addr = UserRegionMem::alloc(user_region_size)?;
-
-                let total_user_space_range = VMRange::new(
-                    reserved_mem_start_addr,
-                    user_region_start_addr + user_region_size,
-                )?;
-                let gap_range =
-                    VMRange::new(reserved_mem_start_addr + init_size, user_region_start_addr)?;
-
-                info!(
-                    "allocated user space range is {:?}, gap range is {:?}",
-                    total_user_space_range, gap_range
-                );
-
-                Ok((total_user_space_range, gap_range))
-            }
-            SGXPlatform::WithoutEDMM | SGXPlatform::Simulation => {
-                // Without EDMM support, we only use reserved memory
-
-                // Set gap size to make the memory layout same as platforms with EDMM.
-                // This value should be the same as the `extra_rsrv_mem_for_no_edmm` defined in gen_internal_conf/main.rs
-                const magic_size: usize = 100 << 20; // 100M
-
-                let block_a_size = if max_size > init_size {
-                    init_size
-                } else {
-                    magic_size
-                };
-                let block_b_size = max_size - block_a_size;
-                info!(
-                    "block_a_size = {:?}, block_b_size = {:?}",
-                    block_a_size, block_b_size
-                );
-                let block_a_start_addr = ReservedMem::alloc(block_a_size)?;
-                let block_b_desired_start_addr = block_a_start_addr + block_a_size + magic_size;
-                let block_b_start_addr =
-                    ReservedMem::alloc_with_addr(block_b_desired_start_addr, block_b_size)?;
-                let total_user_space_range =
-                    VMRange::new(block_a_start_addr, block_b_start_addr + block_b_size)?;
-                let gap_range =
-                    VMRange::new(block_a_start_addr + block_a_size, block_b_start_addr)?;
-                assert!(total_user_space_range.is_superset_of(&gap_range));
-
-                Ok((total_user_space_range, gap_range))
-            }
-        }
-    }
-
-    pub fn free_user_space(&self, user_space_range: &VMRange, gap_range: &VMRange) {
-        let user_space_ranges = user_space_range.subtract(gap_range);
-        debug_assert!(user_space_ranges.len() == 2);
-        match self {
-            SGXPlatform::WithEDMM => {
-                let reserved_mem = user_space_ranges[0];
-                let user_region_mem = user_space_ranges[1];
-                ReservedMem::free(reserved_mem.start(), reserved_mem.size());
-                UserRegionMem::free(user_region_mem.start(), user_region_mem.size());
-            }
-            SGXPlatform::WithoutEDMM | SGXPlatform::Simulation => {
-                user_space_ranges
-                    .iter()
-                    .for_each(|range| ReservedMem::free(range.start(), range.size()));
-            }
-        }
-    }
+    NoEDMM,
 }
 
 #[derive(Clone)]
+pub enum EPCMemType {
+    Reserved,
+    UserRegion,
+    Gap,
+}
+
 pub struct ReservedMem;
+pub struct UserRegionMem;
+pub struct GapMem;
 
-impl ReservedMem {
+const EMM_ALLOCATOR: EmmAlloc = EmmAlloc;
+
+pub trait EPCAllocator {
+    fn alloc(size: usize) -> Result<usize> {
+        return_errno!(ENOSYS, "operation not supported");
+    }
+
+    fn alloc_with_addr(addr: usize, size: usize) -> Result<usize> {
+        return_errno!(ENOSYS, "operation not supported");
+    }
+
+    fn free(addr: usize, size: usize) -> Result<()> {
+        return_errno!(ENOSYS, "operation not supported");
+    }
+
+    fn modify_protection(&self, addr: usize, length: usize, protection: VMPerms) -> Result<()> {
+        return_errno!(ENOSYS, "operation not supported");
+    }
+
+    fn mem_type(&self) -> EPCMemType;
+}
+
+impl EPCAllocator for ReservedMem {
     fn alloc(size: usize) -> Result<usize> {
         let ptr = unsafe { sgx_alloc_rsrv_mem(size) };
         if ptr.is_null() {
@@ -153,12 +75,13 @@ impl ReservedMem {
         Ok(ptr as usize)
     }
 
-    fn free(addr: usize, size: usize) {
+    fn free(addr: usize, size: usize) -> Result<()> {
         let ret = unsafe { sgx_free_rsrv_mem(addr as *const c_void, size) };
         assert!(ret == 0);
+        Ok(())
     }
 
-    pub fn modify_protection(&self, addr: usize, length: usize, protection: VMPerms) -> Result<()> {
+    fn modify_protection(&self, addr: usize, length: usize, protection: VMPerms) -> Result<()> {
         let ret = if rsgx_is_supported_EDMM() {
             unsafe {
                 sgx_tprotect_rsrv_mem(addr as *const c_void, length, protection.bits() as i32)
@@ -183,94 +106,162 @@ impl ReservedMem {
 
         Ok(())
     }
+
+    fn mem_type(&self) -> EPCMemType {
+        EPCMemType::Reserved
+    }
 }
 
-#[derive(Clone)]
-pub struct UserRegionMem;
-
-impl UserRegionMem {
+impl EPCAllocator for UserRegionMem {
     fn alloc(size: usize) -> Result<usize> {
-        let mut ptr = ptr::null_mut();
-        let ret = unsafe {
-            sgx_mm_alloc(
-                ptr::null_mut(),
-                size,
-                EDMM_MAP_FLAGS::COMMIT_ON_DEMAND.bits() as i32,
-                enclave_page_fault_handler_dummy,
-                std::ptr::null_mut(),
-                &mut ptr,
-            )
-        };
-        if ptr.is_null() {
-            return_errno!(ENOMEM, "run out of user region memory");
-        }
+        let alloc_options = AllocOptions::new()
+            .set_flags(AllocFlags::COMMIT_ON_DEMAND)
+            .set_handler(enclave_page_fault_handler_dummy, 0);
+        let ptr = unsafe { EMM_ALLOCATOR.alloc(AllocAddr::Any, size, alloc_options) }
+            .map_err(|e| errno!(Errno::from(e as u32)))?;
 
-        Ok(ptr as usize)
+        Ok(ptr.addr().get())
     }
 
-    fn free(addr: usize, size: usize) {
-        let ret = unsafe { sgx_mm_dealloc(addr as *mut c_void, size) };
-        assert!(ret == 0);
+    fn free(addr: usize, size: usize) -> Result<()> {
+        let ptr = NonNull::<u8>::new(addr as *mut u8).unwrap();
+        unsafe { EMM_ALLOCATOR.dealloc(ptr, size) }.map_err(|e| errno!(Errno::from(e as u32)))?;
+        Ok(())
     }
 
-    pub fn modify_protection(&self, addr: usize, length: usize, protection: VMPerms) -> Result<()> {
+    fn modify_protection(&self, addr: usize, length: usize, protection: VMPerms) -> Result<()> {
         trace!(
             "user region modify protection, protection = {:?}, range = {:?}",
             protection,
             VMRange::new_with_size(addr, length).unwrap()
         );
-        let ret = unsafe {
-            sgx_mm_modify_permissions(addr as *mut c_void, length, protection.bits() as i32)
-        };
-        info!("ret = {:?}", ret);
-        assert!(ret == 0);
+        let ptr = NonNull::<u8>::new(addr as *mut u8).unwrap();
+        unsafe {
+            EMM_ALLOCATOR.modify_permissions(
+                ptr,
+                length,
+                Perm::from_bits(protection.bits()).unwrap(),
+            )
+        }
+        .map_err(|e| errno!(Errno::from(e as u32)))?;
+
         Ok(())
+    }
+
+    fn mem_type(&self) -> EPCMemType {
+        EPCMemType::UserRegion
     }
 }
 
-impl Debug for EPC {
+impl SGXPlatform {
+    pub fn new() -> Self {
+        if rsgx_is_supported_EDMM() {
+            SGXPlatform::WithEDMM
+        } else {
+            SGXPlatform::NoEDMM // including SGX simulation mode
+        }
+    }
+
+    pub fn alloc_user_space(
+        &self,
+        init_size: usize,
+        max_size: usize,
+    ) -> Result<(VMRange, Option<VMRange>)> {
+        debug!(
+            "alloc user space init size = {:?}, max size = {:?}",
+            init_size, max_size
+        );
+        if matches!(self, SGXPlatform::WithEDMM) && max_size > init_size {
+            let user_region_size = max_size - init_size;
+
+            let reserved_mem_start_addr = ReservedMem::alloc(init_size)?;
+
+            let user_region_start_addr = UserRegionMem::alloc(user_region_size)?;
+
+            let total_user_space_range = VMRange::new(
+                reserved_mem_start_addr,
+                user_region_start_addr + user_region_size,
+            )?;
+            let gap_range =
+                VMRange::new(reserved_mem_start_addr + init_size, user_region_start_addr)?;
+
+            info!(
+                "allocated user space range is {:?}, gap range is {:?}",
+                total_user_space_range, gap_range
+            );
+
+            Ok((total_user_space_range, Some(gap_range)))
+        } else {
+            // For platform with no-edmm support, or the max_size is the same as init_size, use reserved memory for the whole userspace
+            let reserved_mem_start_addr = ReservedMem::alloc(max_size)?;
+            let total_user_space_range =
+                VMRange::new(reserved_mem_start_addr, reserved_mem_start_addr + max_size)?;
+
+            info!(
+                "allocated user space range is {:?}, gap range is None",
+                total_user_space_range
+            );
+
+            Ok((total_user_space_range, None))
+        }
+    }
+
+    pub fn free_user_space(&self, user_space_range: &VMRange, gap_range: Option<&VMRange>) {
+        let user_space_ranges = if let Some(gap_range) = gap_range {
+            user_space_range.subtract(gap_range)
+        } else {
+            vec![*user_space_range]
+        };
+
+        if user_space_ranges.len() == 2 {
+            debug_assert!(matches!(self, SGXPlatform::WithEDMM));
+            let reserved_mem = user_space_ranges[0];
+            let user_region_mem = user_space_ranges[1];
+            ReservedMem::free(reserved_mem.start(), reserved_mem.size()).unwrap();
+            UserRegionMem::free(user_region_mem.start(), user_region_mem.size()).unwrap();
+        } else {
+            // For platforms with EDMM but max_size equals init_size or the paltforms without EDMM, there is no gap range.
+            debug_assert!(user_space_ranges.len() == 1);
+            let reserved_mem = user_space_ranges[0];
+            ReservedMem::free(reserved_mem.start(), reserved_mem.size()).unwrap();
+        }
+    }
+}
+
+impl EPCAllocator for GapMem {
+    fn mem_type(&self) -> EPCMemType {
+        EPCMemType::Gap
+    }
+}
+
+impl Debug for EPCMemType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let output_str = match self {
-            EPC::ReservedMem(_) => "reserved memory region",
-            EPC::UserRegionMem(_) => "user region memory",
-            EPC::GapMem => "gap memory",
-            // EPC::Mixed(mem) => {
-            //     match mem.valid_mem_type {
-            //         EPC::ReservedMem(_) => "mixed memory of reserved memory and gap memory",
-            //         EPC::UserRegionMem(_) => "mixed memory of reserved memory and user region memory",
-            //         _ => unreachable!()
-            //     }
-            // }
+            EPCMemType::Reserved => "reserved memory region",
+            EPCMemType::UserRegion => "user region memory",
+            EPCMemType::Gap => "gap memory",
         };
         write!(f, "{}", output_str)
     }
 }
 
-impl EPC {
+impl EPCMemType {
     pub fn new(range: &VMRange) -> Self {
-        info!("EPC new range = {:?}", range);
+        trace!("EPC new range = {:?}", range);
         if rsgx_is_supported_EDMM() {
             let gap_range = USER_SPACE_VM_MANAGER
                 .gap_range()
                 .expect("gap range must exist");
             debug_assert!(!gap_range.is_superset_of(range));
             if range.end() <= gap_range.start() {
-                EPC::ReservedMem(ReservedMem)
+                EPCMemType::Reserved
             } else {
                 debug_assert!(gap_range.end() <= range.start());
-                EPC::UserRegionMem(UserRegionMem)
-                // } else {
-                //     debug_assert!(gap_range.overlap_with(range));
-                //     let intersect_gap_range= gap_range.intersect(range).unwrap();
-                //     let valid_mem_range = range.subtract(intersect_gap_range);
-                //     if gap_range.start() <= range.end() {
-                //         // It is a Mixed memory of reserved memory and gap memory
-                //         EPC::Mixed(MixedMem::new(intersect_gap_range, EPC::ReservedMem(ReservedMem), ))
-                //     }
+                EPCMemType::UserRegion
             }
         } else {
             // Only reserved memory
-            EPC::ReservedMem(ReservedMem)
+            EPCMemType::Reserved
         }
     }
 
@@ -280,22 +271,16 @@ impl EPC {
         let mut prot = protection.clone();
         prot.remove(VMPerms::GROWSDOWN);
 
-        if rsgx_is_supported_EDMM() {
-            match self {
-                EPC::ReservedMem(mem) => mem.modify_protection(addr, length, protection),
-                EPC::UserRegionMem(mem) => mem.modify_protection(addr, length, protection),
-                EPC::GapMem => unreachable!(),
-            }
-        } else if let EPC::ReservedMem(mem) = self {
-            mem.modify_protection(addr, length, protection)
-        } else {
-            unreachable!()
+        match self {
+            EPCMemType::Reserved => ReservedMem.modify_protection(addr, length, protection),
+            EPCMemType::UserRegion => UserRegionMem.modify_protection(addr, length, protection),
+            EPCMemType::Gap => unreachable!(),
         }
     }
 }
 
 pub fn commit_epc_for_user_space(start_addr: usize, size: usize) -> Result<()> {
-    info!(
+    trace!(
         "commit epc: {:?}",
         VMRange::new_with_size(start_addr, size).unwrap()
     );
@@ -308,61 +293,21 @@ pub fn commit_epc_for_user_space(start_addr: usize, size: usize) -> Result<()> {
     }
 }
 
-#[repr(C)]
-pub struct sgx_pfinfo_local {
-    maddr: u64, // address for #PF.
-    pfec: pfec,
-    reserved: u32,
-}
-
-#[repr(C)]
-union pfec {
-    errcd: u32,
-    inner: _pfec,
-}
-
-#[derive(Clone, Copy)]
-#[bitfield]
-struct _pfec {
-    p: B1,
-    rw: B1,
-    reserved_01: B13,
-    sgx: B1,
-    reserved_02: B16,
-}
-
-bitflags! {
-    pub struct EDMM_MAP_FLAGS : u32 {
-        const RESERVE          = 0x1;
-        const COMMIT_NOW       = 0x2;
-        const COMMIT_ON_DEMAND = 0x4;
-    }
-}
-
-#[repr(i32)]
-enum PFHandlerRet {
-    SGX_MM_EXCEPTION_CONTINUE_EXECUTION = -1,
-    SGX_MM_EXCEPTION_CONTINUE_SEARCH = 0,
-}
-
-// This is a dummy function for sgx_mm_alloc. The real handler is "enclave_page_fault_handler" shown above.
-#[no_mangle]
+// This is a dummy function for sgx_mm_alloc. The real handler is "enclave_page_fault_handler" shown below.
 extern "C" fn enclave_page_fault_handler_dummy(
-    sgx_pf_info: *const sgx_pfinfo,
-    private_data: *mut c_void,
-) -> i32 {
+    pfinfo: &sgx_pfinfo,
+    private: usize,
+) -> HandleResult {
     // Don't do anything here. Modification of registers can cause the PF handling error.
-    return PFHandlerRet::SGX_MM_EXCEPTION_CONTINUE_SEARCH as i32;
+    return HandleResult::Search;
 }
 
 pub fn enclave_page_fault_handler(
     exception_info: sgx_misc_exinfo_t,
     kernel_triggers: bool,
 ) -> Result<()> {
-    // Safety: sgx_pfinfo and sgx_misc_exinfo_t have the same memory layout.
-    let pf_info: sgx_pfinfo_local = unsafe { std::mem::transmute(exception_info) };
-    let pf_addr = pf_info.maddr as usize;
-    trace!("enclave page fault caught, pf_addr = 0x{:x}", pf_addr);
+    let pf_addr = exception_info.faulting_address as usize;
+    info!("enclave page fault caught, pf_addr = 0x{:x}", pf_addr);
 
     // TODO: Maybe we can find a better way to know whether the page fault is due to protection violation or not.
 
@@ -370,10 +315,6 @@ pub fn enclave_page_fault_handler(
 
     Ok(())
 }
-
-#[allow(non_camel_case_types)]
-pub type enclave_pf_handler_t =
-    extern "C" fn(sgx_pf_info: *mut sgx_pfinfo, private_data: *const c_void) -> i32;
 
 extern "C" {
     fn occlum_ocall_mprotect(

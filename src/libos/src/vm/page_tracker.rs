@@ -2,8 +2,8 @@ use super::*;
 
 use super::user_space_vm::USER_SPACE_VM_MANAGER;
 use bitvec::vec::BitVec;
-use std::sync::SgxRwLock;
-use vm_epc::EPC;
+use util::sync::RwLock;
+use vm_epc::EPCMemType;
 
 // In SGX v2, there is no upper limit for the size of EPC. If the user configure 1 TB memory,
 // and we only use one bit to track if the page is committed, that's 1 TB / 4 kB / 8 bit = 32 MB of memory.
@@ -31,8 +31,8 @@ use vm_epc::EPC;
 // Since the VM operations are mostly performed by VMA, the VMA tracker will update itself accordingly. And also update the corresponding GlobalTracker.
 
 lazy_static! {
-    pub static ref USER_SPACE_PAGE_CHUNK_MANAGER: SgxRwLock<PageChunkManager> =
-        SgxRwLock::new(PageChunkManager::new(USER_SPACE_VM_MANAGER.range()));
+    pub static ref USER_SPACE_PAGE_CHUNK_MANAGER: RwLock<PageChunkManager> =
+        RwLock::new(PageChunkManager::new(USER_SPACE_VM_MANAGER.range()));
 }
 
 const GB: usize = 1 << 30;
@@ -40,8 +40,8 @@ const TB: usize = 1 << 40;
 const MB: usize = 1 << 20;
 const KB: usize = 1 << 10;
 
-const PageChunkUnit: usize = 8 * PAGE_SIZE;
-const PageChunkPageNum: usize = PageChunkUnit / PAGE_SIZE;
+const PAGE_CHUNK_UNIT: usize = 8 * PAGE_SIZE;
+const PAGE_CHUNK_PAGE_NUM: usize = PAGE_CHUNK_UNIT / PAGE_SIZE;
 
 pub struct PageChunkManager {
     // The total range that the manager manages.
@@ -59,7 +59,7 @@ impl PageChunkManager {
     }
 
     fn page_chunk_unit() -> usize {
-        PageChunkUnit
+        PAGE_CHUNK_UNIT
     }
 }
 
@@ -67,26 +67,26 @@ impl PageChunkManager {
 // A chunk of pages. Memory space is precious. Don't put anything unnecessary.
 struct GlobalPageChunk {
     fully_committed: bool,
-    tracker: Option<Arc<SgxRwLock<PageTracker>>>, // if this page chunk is fully committed, the tracker will be set to None.
+    tracker: Option<Arc<RwLock<PageTracker>>>, // if this page chunk is fully committed, the tracker will be set to None.
 }
 
 impl GlobalPageChunk {
     fn new(tracker: PageTracker) -> Self {
         Self {
             fully_committed: false,
-            tracker: Some(Arc::new(SgxRwLock::new(tracker))),
+            tracker: Some(Arc::new(RwLock::new(tracker))),
         }
     }
 }
 
 #[derive(PartialEq, Clone, Debug)]
 enum TrackerType {
-    GlobalTracker, // PageChunkUnit size for global management to track the global paging status
+    GlobalTracker, // PAGE_CHUNK_UNIT size for global management to track the global paging status
     VMATracker,    // various size for different vma to track its own paging status
     GapTracker,    // Tracking for range which shouldn't be touched by users
 }
 
-// 1GB page chunk or VMA track its pages
+// Used for tracking the paging status of global tracker or VMA tracker
 #[derive(Clone)]
 pub struct PageTracker {
     type_: TrackerType,
@@ -110,15 +110,9 @@ impl PageTracker {
     // Create a new page tracker for GlobalPageChunk.
     // When a new global tracker is needed, none of the pages are committed.
     fn new_global_tracker(start_addr: usize) -> Result<Self> {
-        let range = VMRange::new_with_size(start_addr, PageChunkUnit)?;
-        // debug_assert!({
-        //     // Global tracker should be created for user region memory. But it can overlap with the gap.
-        //     use super::vm_epc::EPC;
-        //     let epc_type = EPC::new(&range);
-        //     matches!(epc_type, EPC::UserRegionMem(_))
-        // });
+        let range = VMRange::new_with_size(start_addr, PAGE_CHUNK_UNIT)?;
 
-        let inner = bitvec![0; PageChunkPageNum];
+        let inner = bitvec![0; PAGE_CHUNK_PAGE_NUM];
         Ok(Self {
             type_: TrackerType::GlobalTracker,
             range,
@@ -127,11 +121,11 @@ impl PageTracker {
         })
     }
 
-    pub fn new_vma_tracker(vm_range: &VMRange, epc_type: &EPC) -> Result<Self> {
-        info!("new vma tracker, range = {:?}", vm_range);
+    pub fn new_vma_tracker(vm_range: &VMRange, epc_type: &EPCMemType) -> Result<Self> {
+        trace!("new vma tracker, range = {:?}", vm_range);
         let page_num = vm_range.size() / PAGE_SIZE;
         let new_vma_tracker = match epc_type {
-            EPC::UserRegionMem(_) => {
+            EPCMemType::UserRegion => {
                 let mut new_vma_tracker = Self {
                     type_: TrackerType::VMATracker,
                     range: vm_range.clone(),
@@ -145,7 +139,7 @@ impl PageTracker {
                 }
                 new_vma_tracker
             }
-            EPC::ReservedMem(_) => {
+            EPCMemType::Reserved => {
                 // For reserved memory, there is no need to udpate global page tracker.
                 // And there is no GLobalPageChunk for reserved memory.
                 Self {
@@ -212,8 +206,9 @@ impl PageTracker {
         let mut ret = Vec::new();
         let mut start = None;
         let mut end = None;
-        let mut i = 0;
-        while i < self.inner.len() {
+        // let mut i = 0;
+        // while i < self.inner.len() {
+        for i in 0..self.inner.len() {
             if self.inner[i] == committed {
                 match (start, end) {
                     // Meet committed page for the first time. Update both the start and end marker.
@@ -245,7 +240,7 @@ impl PageTracker {
                     }
                     _ => unreachable!(),
                 }
-                i += 1;
+                // i += 1;
             } else {
                 match (start, end) {
                     (None, None) => {
@@ -267,7 +262,7 @@ impl PageTracker {
                         unreachable!()
                     }
                 }
-                i += 1;
+                // i += 1;
             }
         }
 
@@ -284,17 +279,16 @@ impl PageTracker {
     }
 
     pub fn split_from_new_start(&mut self, new_start: usize) {
-        // self.range.start = start;
         debug_assert!(self.range.start() <= new_start && new_start < self.range.end());
-        // self.range.set_start(new_start);
 
         let split_idx = (new_start - self.range.start()) / PAGE_SIZE;
-        // debug_assert!(split_idx * PAGE_SIZE + self.range.start() == new_start);
         let new_inner = self.inner.split_off(split_idx);
 
-        info!(
+        trace!(
             "old range= {:?}, new_start = {:x}, idx = {:?}",
-            self.range, new_start, split_idx
+            self.range,
+            new_start,
+            split_idx
         );
 
         self.inner = new_inner;
@@ -341,12 +335,8 @@ impl PageTracker {
 
         vm_epc::commit_epc_for_user_space(range.start(), range.size())?;
 
-        // if (range.start() & 0xffffff) == 0xb79000 {
-        //     info!("caught pf, CORRESPONDING RANGE=  {:?}, skip init memory", range);
-        // } else {
         self.commit_pages_internal(range.start(), range.size());
         self.update_pages_for_global_tracker(range.start(), range.size());
-        // }
 
         Ok(())
     }
@@ -355,18 +345,18 @@ impl PageTracker {
     fn update_committed_pages_from_global(&mut self) -> Result<()> {
         debug_assert!(self.type_ == TrackerType::VMATracker);
         let mut vma_tracker = self;
-        info!("vma_tracker = {:?}", vma_tracker);
+        trace!("vma_tracker = {:?}", vma_tracker);
         let mut page_chunk_addr = get_page_chunk_start_addr(vma_tracker.range().start());
 
         let range_end = vma_tracker.range().end();
         while (page_chunk_addr < range_end) {
-            // info!("page_chunk_addr = {:x}, range_end = {:x}", page_chunk_addr, range_end);
+            // trace!("page_chunk_addr = {:x}, range_end = {:x}", page_chunk_addr, range_end);
             let manager = USER_SPACE_PAGE_CHUNK_MANAGER.read().unwrap();
             if let Some(page_chunk) = manager.inner.get(&page_chunk_addr) {
                 if page_chunk.fully_committed {
                     // global page chunk fully committed. commit pages for vma page chunk
                     trace!("update_committed_pages_from_global 1");
-                    vma_tracker.commit_pages_internal(page_chunk_addr, PageChunkUnit);
+                    vma_tracker.commit_pages_internal(page_chunk_addr, PAGE_CHUNK_UNIT);
                 } else {
                     debug_assert!(page_chunk.tracker.is_some());
                     // trace!("update_committed_pages 2");
@@ -397,7 +387,7 @@ impl PageTracker {
             }
 
             // Update page chunk addr for next loop
-            page_chunk_addr = page_chunk_addr + PageChunkUnit;
+            page_chunk_addr = page_chunk_addr + PAGE_CHUNK_UNIT;
         }
 
         Ok(())
@@ -456,7 +446,7 @@ impl PageTracker {
                     // page_tracker is none, the page chunk is fully committed. Go to next chunk.
                     debug_assert!(page_chunk.fully_committed);
                     trace!("update_global_tracker 2");
-                    page_chunk_start_addr = page_chunk_start_addr + PageChunkUnit;
+                    page_chunk_start_addr = page_chunk_start_addr + PAGE_CHUNK_UNIT;
                     continue;
                 }
             };
@@ -479,23 +469,20 @@ impl PageTracker {
                 }
             }
 
-            page_chunk_start_addr = page_chunk_start_addr + PageChunkUnit;
+            page_chunk_start_addr = page_chunk_start_addr + PAGE_CHUNK_UNIT;
         }
     }
 
     // Commit pages for page tracker itself. This is a common method for both VMATracker and GlobalTracker.
     fn commit_pages_internal(&mut self, start_addr: usize, size: usize) {
         debug_assert!(self.type_ != TrackerType::GapTracker);
-        // if self.fully_committed {
-        //     return;
-        // }
         debug_assert!(!self.fully_committed);
 
         if let Some(intersection_range) = {
             let range = VMRange::new_with_size(start_addr, size).unwrap();
             self.range.intersect(&range)
         } {
-            warn!("commit for page tracker: {:?}", self);
+            trace!("commit for page tracker: {:?}", self);
             trace!("commit_pages intersection range = {:?}", intersection_range);
             let page_start_id = (intersection_range.start() - self.range().start()) / PAGE_SIZE;
             let page_num = intersection_range.size() / PAGE_SIZE;
@@ -514,5 +501,5 @@ impl PageTracker {
 
 #[inline(always)]
 fn get_page_chunk_start_addr(addr: usize) -> usize {
-    align_down(addr, PageChunkUnit)
+    align_down(addr, PAGE_CHUNK_UNIT)
 }

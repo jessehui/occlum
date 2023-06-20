@@ -309,18 +309,18 @@ cmd_build() {
         fi
         echo "SGX mode: $SGX_MODE"
         echo "Enable EDMM: No"
-        instance_is_for_edmm_platform="NO"
+        INSTANCE_IS_FOR_EDMM_PLATFORM="NO"
     else
         echo "SGX mode: HW"
 
          # ENABLE_EDMM is only valid for HW mode
         case "$ENABLE_EDMM" in
             "" | "Y" | "Yes" | "yes" | "True" | "true")
-                instance_is_for_edmm_platform="YES"
+                INSTANCE_IS_FOR_EDMM_PLATFORM="YES"
                 echo "Enable EDMM: Yes"
             ;;
             *)
-                instance_is_for_edmm_platform="NO"
+                INSTANCE_IS_FOR_EDMM_PLATFORM="NO"
                 echo "Enable EDMM: No"
             ;;
         esac
@@ -344,7 +344,7 @@ cmd_build() {
         make -f $build_makefile $MAKE_OPTION
     fi
     occlum_dir=$occlum_dir instance_dir=$instance_dir pal_lib=$pal_lib major_ver=$major_ver \
-    occlum_version=$occlum_version libos_lib=$libos_lib instance_is_for_edmm_platform=$instance_is_for_edmm_platform \
+    occlum_version=$occlum_version libos_lib=$libos_lib INSTANCE_IS_FOR_EDMM_PLATFORM=$INSTANCE_IS_FOR_EDMM_PLATFORM \
     ENCLAVE_SIGN_KEY=$ENCLAVE_SIGN_KEY ENCLAVE_SIGN_TOOL=$ENCLAVE_SIGN_TOOL \
     SECURE_IMAGE_KEY=$SECURE_IMAGE_KEY BUILDIN_IMAGE_KEY=$BUILDIN_IMAGE_KEY \
     make -f $build_makefile --no-builtin-rules

@@ -8,7 +8,7 @@ use super::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use super::vm_epc::EPC;
+use super::vm_epc::EPCMemType;
 use intrusive_collections::rbtree::{Link, RBTree};
 use intrusive_collections::{intrusive_adapter, KeyAdapter};
 
@@ -24,7 +24,7 @@ pub struct VMArea {
     initializer: Option<VMInitializer>, // Record the initializer for lazy intialization in PF handler. Drop when the VMA is fully committed
     pid: pid_t,
     pages: Option<PageTracker>, // Track the paging status of this VMA
-    epc_type: EPC,              // Track the type of the EPC to use specific APIs
+    epc_type: EPCMemType,       // Track the type of the EPC to use specific APIs
     lazy_extend_perms: Option<VMPerms>, // To know if this VMA is lazyly extending permission by tracking the old permission.
 }
 
@@ -37,7 +37,7 @@ impl VMArea {
         pid: pid_t,
         lazy_extend_perms: Option<VMPerms>,
     ) -> Self {
-        let epc_type = EPC::new(&range);
+        let epc_type = EPCMemType::new(&range);
         let pages = {
             let pages = PageTracker::new_vma_tracker(&range, &epc_type).unwrap();
             if pages.is_fully_committed() {
@@ -71,7 +71,7 @@ impl VMArea {
                 Some(pages)
             }
         };
-        let epc_type = EPC::GapMem;
+        let epc_type = EPCMemType::Gap;
         let new_vma = Self {
             range: gap_range,
             perms: VMPerms::default(),
@@ -291,7 +291,7 @@ impl VMArea {
     pub fn handle_page_fault(&mut self, pf_addr: usize, kernel_triggers: bool) -> Result<()> {
         trace!("PF vma = {:?}", self);
 
-        if matches!(self.epc_type, EPC::ReservedMem(_)) {
+        if matches!(self.epc_type, EPCMemType::Reserved) {
             return_errno!(EINVAL, "reserved memory shouldn't trigger PF");
         }
 
@@ -379,21 +379,9 @@ impl VMArea {
 
         self.range.set_start(new_start);
 
-        // let pages = {
-        //     // TODO: Find a O(1) method to set start
-        //     let pages = PageTracker::new_vma_tracker(&self.range, &self.epc_type).unwrap();
-        //     if pages.is_fully_committed() {
-        //         None
-        //     } else {
-        //         Some(pages)
-        //     }
-        // };
-        // self.pages = pages;
-
         if new_start < old_start {
             // Extend this VMA
             let pages = {
-                // TODO: Find a O(1) method to set start
                 let pages = PageTracker::new_vma_tracker(&self.range, &self.epc_type).unwrap();
                 if pages.is_fully_committed() {
                     None
@@ -403,6 +391,7 @@ impl VMArea {
             };
             self.pages = pages;
         } else {
+            // Split this VMA
             debug_assert!(new_start > old_start);
             if let Some(pages) = &mut self.pages {
                 pages.split_from_new_start(new_start);
@@ -541,14 +530,12 @@ impl VMArea {
 
         trace!("old perms = {:?}, new_perms = {:?}", old_perms, new_perms);
         match &self.epc_type {
-            EPC::UserRegionMem(user_region) => {
+            EPCMemType::UserRegion => {
                 if force {
                     trace!("force apply perms");
-                    user_region.modify_protection(
-                        protect_range.start(),
-                        protect_range.size(),
-                        new_perms,
-                    );
+                    self.epc_type
+                        .modify_protection(protect_range.start(), protect_range.size(), new_perms)
+                        .unwrap();
                 } else {
                     if VMPerms::can_lazy_extend(old_perms, new_perms) {
                         trace!("skip apply extending perms");
@@ -556,20 +543,20 @@ impl VMArea {
                     } else {
                         trace!("reduce perms");
                         // For protection reduction, do it right now.
-                        user_region.modify_protection(
-                            protect_range.start(),
-                            protect_range.size(),
-                            new_perms,
-                        );
+                        self.epc_type
+                            .modify_protection(
+                                protect_range.start(),
+                                protect_range.size(),
+                                new_perms,
+                            )
+                            .unwrap();
                     }
                 }
             }
-            EPC::ReservedMem(reserved_mem) => {
-                reserved_mem.modify_protection(
-                    protect_range.start(),
-                    protect_range.size(),
-                    new_perms,
-                );
+            EPCMemType::Reserved => {
+                self.epc_type
+                    .modify_protection(protect_range.start(), protect_range.size(), new_perms)
+                    .unwrap();
             }
             _ => unreachable!(),
         }
@@ -581,23 +568,26 @@ impl VMArea {
         // old_perms: VMPerms,
         new_perms: VMPerms,
     ) {
-        match &self.epc_type {
-            EPC::UserRegionMem(user_region) => {
-                user_region.modify_protection(
-                    protect_range.start(),
-                    protect_range.size(),
-                    new_perms,
-                );
-            }
-            EPC::ReservedMem(reserved_mem) => {
-                reserved_mem.modify_protection(
-                    protect_range.start(),
-                    protect_range.size(),
-                    new_perms,
-                );
-            }
-            _ => unreachable!(),
-        }
+        // match &self.epc_type {
+        //     EPC::UserRegionMem(user_region) => {
+        //         user_region.modify_protection(
+        //             protect_range.start(),
+        //             protect_range.size(),
+        //             new_perms,
+        //         );
+        //     }
+        //     EPC::ReservedMem(reserved_mem) => {
+        //         reserved_mem.modify_protection(
+        //             protect_range.start(),
+        //             protect_range.size(),
+        //             new_perms,
+        //         );
+        //     }
+        //     _ => unreachable!(),
+        // }
+        self.epc_type
+            .modify_protection(protect_range.start(), protect_range.size(), new_perms)
+            .unwrap()
     }
 
     fn init_committed_memory_internal(&mut self, range: &VMRange, force_perm: bool) -> Result<()> {
@@ -799,7 +789,7 @@ impl VMArea {
             }
 
             self.epc_type
-                .modify_protection(range.start(), range.size(), permission);
+                .modify_protection(range.start(), range.size(), permission)?;
         }
 
         Ok(())

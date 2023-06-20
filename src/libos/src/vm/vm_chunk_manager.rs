@@ -135,34 +135,6 @@ impl ChunkManager {
         };
         trace!("new vma is ready");
 
-        // // Commit page and init the memory if committed
-        // let page_policy = options.page_policy();
-        // let mut first_time_commit = false;
-        // if !new_vma.is_fully_committed() && page_policy == &PagePolicy::CommitNow {
-        //     new_vma.commit_current_vma()?;
-        //     first_time_commit = true;
-        // }
-
-        // if new_vma.is_partially_committed() {
-        //     // Init commmitted memory if it is back by a file.
-        //     new_vma.init_committed_memory().unwrap();
-        // } else if new_vma.is_fully_committed() {
-        //     // Initialize the memory of the new range
-        //     let buf = unsafe { new_vma.as_slice_mut() };
-        //     let ret = options.initializer().init_slice(buf, first_time_commit);
-        //     if let Err(e) = ret {
-        //         // Return the free range before return with error
-        //         self.free_manager
-        //             .add_range_back_to_free_manager(new_vma.range());
-        //         return_errno!(e.errno(), "failed to mmap");
-        //     }
-
-        //     // Set memory permissions
-        //     if !options.perms().is_default() {
-        //         new_vma.modify_protection_lazy(None, VMPerms::DEFAULT, new_vma.perms(), false);
-        //     }
-        // }
-
         self.free_size -= new_vma.size();
         // After initializing, we can safely insert the new VMA
         self.vmas.insert(VMAObj::new_vma_obj(new_vma));
@@ -389,12 +361,6 @@ impl ChunkManager {
                             containing_vma.set_start(remain_vma.start());
                         }
                         trace!("containing_vma 2 = {:?}", containing_vma);
-                        // let mut new_vma = VMArea::inherits_file_from(
-                        //     &containing_vma,
-                        //     intersection_vma.range().clone(),
-                        //     new_perms,
-                        //     current_pid,
-                        // );
                         debug_assert!(containing_vma.range() == remain_vma.range());
                         let mut new_vma = {
                             let mut vma = intersection_vma;

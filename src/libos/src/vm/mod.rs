@@ -80,7 +80,6 @@ use self::vm_layout::VMLayout;
 pub use self::chunk::{ChunkRef, ChunkType};
 pub use self::process_vm::{MMapFlags, MRemapFlags, MSyncFlags, ProcessVM, ProcessVMBuilder};
 pub use self::user_space_vm::USER_SPACE_VM_MANAGER;
-// pub use self::user_space_vm::free_user_space;
 pub use self::vm_area::VMArea;
 pub use self::vm_epc::enclave_page_fault_handler;
 pub use self::vm_perms::VMPerms;
