@@ -17,14 +17,12 @@ pub fn end_pair(nonblocking: bool) -> Result<(Endpoint, Endpoint)> {
         reader: con_a,
         writer: pro_b,
         peer: Weak::default(),
-        ancillary: RwLock::new(None),
     });
     let end_b = Arc::new(Inner {
         addr: RwLock::new(None),
         reader: con_b,
         writer: pro_a,
         peer: Arc::downgrade(&end_a),
-        ancillary: RwLock::new(None),
     });
 
     unsafe {
@@ -43,7 +41,6 @@ pub struct Inner {
     reader: Consumer<u8>,
     writer: Producer<u8>,
     peer: Weak<Self>,
-    ancillary: RwLock<Option<Ancillary>>,
 }
 
 impl Inner {
@@ -122,18 +119,6 @@ impl Inner {
         events
     }
 
-    pub fn ancillary(&self) -> Option<Ancillary> {
-        self.ancillary.read().unwrap().clone()
-    }
-
-    pub fn set_ancillary(&self, ancillary: Ancillary) {
-        self.ancillary.write().unwrap().insert(ancillary);
-    }
-
-    pub fn peer_ancillary(&self) -> Option<Ancillary> {
-        self.peer.upgrade().map(|end| end.ancillary()).flatten()
-    }
-
     pub(self) fn register_relay_notifier(&self, observer: &Arc<RelayNotifier>) {
         self.reader.notifier().register(
             Arc::downgrade(observer) as Weak<dyn Observer<_>>,
@@ -150,18 +135,6 @@ impl Inner {
 
     fn is_connected(&self) -> bool {
         self.peer.upgrade().is_some()
-    }
-}
-
-/// Ancillary data of connected unix socket's sent/received control message.
-#[derive(Clone, Debug)]
-pub struct Ancillary {
-    pub(super) tid: pid_t, // currently store tid to locate file table
-}
-
-impl Ancillary {
-    pub fn tid(&self) -> pid_t {
-        self.tid
     }
 }
 
