@@ -43,11 +43,8 @@ LINK_FLAGS = $(C_FLAGS) -pie $(EXTRA_LINK_FLAGS)
 #############################################################################
 # Build
 #############################################################################
-all: custom_pre_build $(ALL_BUILD_SUBDIRS) $(BIN) $(DEPS_FILE)
 
-ifneq ($(CUSTOM_PRE_BUILD), 1)
-custom_pre_build:
-endif
+all: $(ALL_BUILD_SUBDIRS) $(BIN) $(DEPS_FILE)
 
 $(ALL_BUILD_SUBDIRS):
 	@mkdir -p $@
