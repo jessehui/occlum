@@ -36,12 +36,12 @@ impl ChunkManager {
                 let range = VMRange::new_empty(start)?;
                 let perms = VMPerms::empty();
                 // sentry vma shouldn't belong to any process
-                VMAObj::new_vma_obj(VMArea::new(range, perms, None, None, 0, None))
+                VMAObj::new_vma_obj(VMArea::new(range, perms, None, 0, None))
             };
             let end_sentry = {
                 let range = VMRange::new_empty(end)?;
                 let perms = VMPerms::empty();
-                VMAObj::new_vma_obj(VMArea::new(range, perms, None, None, 0, None))
+                VMAObj::new_vma_obj(VMArea::new(range, perms, None, 0, None))
             };
             let mut new_tree = RBTree::new(VMAAdapter::new());
             new_tree.insert(start_sentry);
@@ -114,7 +114,7 @@ impl ChunkManager {
             let new_vma = VMArea::new(
                 new_range,
                 *options.perms(),
-                Some(options.initializer().clone()),
+                // Some(options.initializer().clone()),
                 options.initializer().backed_file(),
                 current_pid,
                 None,

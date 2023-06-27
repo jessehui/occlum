@@ -97,7 +97,7 @@ impl Chunk {
         let vm_area = VMArea::new(
             vm_range.clone(),
             *options.perms(),
-            Some(options.initializer().clone()),
+            // Some(options.initializer().clone()),
             options.initializer().backed_file(),
             DUMMY_CHUNK_PROCESS_ID,
             None,

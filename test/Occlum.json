@@ -6,7 +6,7 @@
         "user_space_size": "1MB",
         "user_space_max_size": "600MB",
         "init_num_of_threads": 2,
-        "max_num_of_threads": 10
+        "max_num_of_threads": 64
     },
     "process": {
         "default_stack_size": "4MB",

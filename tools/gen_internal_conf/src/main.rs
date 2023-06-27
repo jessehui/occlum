@@ -53,7 +53,7 @@ fn main() {
     env_logger::init();
 
     let instance_is_for_edmm_platform = {
-        match std::env::var("instance_is_for_edmm_platform") {
+        match std::env::var("INSTANCE_IS_FOR_EDMM_PLATFORM") {
             Ok(val) => val == "YES",
             _ => unreachable!(),
         }
@@ -175,8 +175,8 @@ fn main() {
                 {
                     *init_num_of_threads
                 } else {
-                    // If the user doesn't provide a value, use the default value.
-                    DEFAULT_CONFIG.tcs_init_num
+                    // The user doesn't provide a value
+                    std::cmp::min(DEFAULT_CONFIG.tcs_init_num,occlum_config.resource_limits.max_num_of_threads )
                 };
 
                 // For platforms with EDMM support, use the max value
@@ -197,6 +197,13 @@ fn main() {
             "tcs init num: {}, tcs_min_pool: {}, tcs_max_num: {}",
             tcs_init_num, tcs_min_pool, tcs_max_num
         );
+        if tcs_init_num > tcs_max_num {
+            println!(
+                "init_num_of_threads: {:?}, max_num_of_threads: {:?}, wrong configuration",
+                occlum_config.resource_limits.init_num_of_threads, occlum_config.resource_limits.max_num_of_threads,
+            );
+            return;
+        }
 
         // get the kernel stack size
         let stack_max_size =
@@ -227,15 +234,15 @@ fn main() {
                 if let Some(ref heap_max_size) =
                     occlum_config.resource_limits.kernel_space_heap_max_size
                 {
-                    let config_user_space_max_size = parse_memory_size(&heap_max_size);
-                    if config_user_space_max_size.is_err() {
+                    let config_kernel_heap_max_size = parse_memory_size(&heap_max_size);
+                    if config_kernel_heap_max_size.is_err() {
                         println!(
                             "The kernel_space_heap_max_size \"{}\" is not correct.",
                             heap_max_size
                         );
                         return;
                     }
-                    Some(config_user_space_max_size.unwrap())
+                    config_kernel_heap_max_size.ok()
                 } else {
                     None
                 }
@@ -272,10 +279,18 @@ fn main() {
                 }
             }
         };
+        if kernel_heap_init_size > kernel_heap_max_size {
+            println!(
+                "kernel_space_heap_size: {:?}, kernel_space_heap_max_size: {:?}, wrong configuration",
+                occlum_config.resource_limits.kernel_space_heap_size, occlum_config.resource_limits.kernel_space_heap_max_size,
+            );
+            return;
+        }
         debug!(
             "kernel heap init size = {}, kernel heap max size = {}",
             kernel_heap_init_size, kernel_heap_max_size
         );
+        assert!(kernel_heap_max_size >= kernel_heap_init_size);
 
         let (config_user_space_init_size, config_user_space_max_size) = {
             let user_space_init_size = {
@@ -303,7 +318,7 @@ fn main() {
                         );
                         return;
                     }
-                    Some(config_user_space_max_size.unwrap())
+                    config_user_space_max_size.ok()
                 } else {
                     None
                 }
@@ -338,11 +353,19 @@ fn main() {
             };
             (user_space_init_size, user_space_max_size)
         };
+        if config_user_space_init_size > config_user_space_max_size {
+            println!(
+                "user_space_size: {:?}, user_space_max_size: {:?}, wrong configuration",
+                occlum_config.resource_limits.user_space_size, occlum_config.resource_limits.user_space_max_size,
+            );
+            return;
+        }
 
         debug!(
             "config user space init size = {},config user space max size = {}",
             config_user_space_init_size, config_user_space_max_size
         );
+        assert!(config_user_space_init_size <= config_user_space_max_size);
 
         // Calculate the actual memory size for different regions
         let (reserved_mem_size, user_region_mem_size) = {

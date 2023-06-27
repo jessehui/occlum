@@ -3,7 +3,7 @@ use super::*;
 use super::user_space_vm::USER_SPACE_VM_MANAGER;
 use bitvec::vec::BitVec;
 use util::sync::RwLock;
-use vm_epc::EPC;
+use vm_epc::EPCMemType;
 
 // In SGX v2, there is no upper limit for the size of EPC. If the user configure 1 TB memory,
 // and we only use one bit to track if the page is committed, that's 1 TB / 4 kB / 8 bit = 32 MB of memory.
@@ -56,10 +56,6 @@ impl PageChunkManager {
             range: range.clone(),
             inner: HashMap::new(),
         }
-    }
-
-    fn page_chunk_unit() -> usize {
-        PAGE_CHUNK_UNIT
     }
 }
 
@@ -121,11 +117,11 @@ impl PageTracker {
         })
     }
 
-    pub fn new_vma_tracker(vm_range: &VMRange, epc_type: &EPC) -> Result<Self> {
+    pub fn new_vma_tracker(vm_range: &VMRange, epc_type: &EPCMemType) -> Result<Self> {
         trace!("new vma tracker, range = {:?}", vm_range);
         let page_num = vm_range.size() / PAGE_SIZE;
         let new_vma_tracker = match epc_type {
-            EPC::UserRegionMem(_) => {
+            EPCMemType::UserRegion => {
                 let mut new_vma_tracker = Self {
                     type_: TrackerType::VMATracker,
                     range: vm_range.clone(),
@@ -139,7 +135,7 @@ impl PageTracker {
                 }
                 new_vma_tracker
             }
-            EPC::ReservedMem(_) => {
+            EPCMemType::Reserved => {
                 // For reserved memory, there is no need to udpate global page tracker.
                 // And there is no GLobalPageChunk for reserved memory.
                 Self {
@@ -206,8 +202,9 @@ impl PageTracker {
         let mut ret = Vec::new();
         let mut start = None;
         let mut end = None;
-        let mut i = 0;
-        while i < self.inner.len() {
+        // let mut i = 0;
+        // while i < self.inner.len() {
+        for i in 0..self.inner.len() {
             if self.inner[i] == committed {
                 match (start, end) {
                     // Meet committed page for the first time. Update both the start and end marker.
@@ -239,7 +236,7 @@ impl PageTracker {
                     }
                     _ => unreachable!(),
                 }
-                i += 1;
+                // i += 1;
             } else {
                 match (start, end) {
                     (None, None) => {
@@ -261,7 +258,7 @@ impl PageTracker {
                         unreachable!()
                     }
                 }
-                i += 1;
+                // i += 1;
             }
         }
 
@@ -299,7 +296,7 @@ impl PageTracker {
     }
 
     // Commit memory for the whole current VMA (VMATracker)
-    pub fn commit_current_vma(&mut self, need_update_global: bool) -> Result<()> {
+    pub fn commit_current_vma_whole(&mut self, need_update_global: bool) -> Result<()> {
         debug_assert!(self.type_ == TrackerType::VMATracker);
 
         if self.is_fully_committed() {
@@ -331,6 +328,7 @@ impl PageTracker {
     // Commit memory of a specific range for the current VMA (VMATracker). The range should be verified by caller.
     pub fn commit_range_for_current_vma(&mut self, range: &VMRange) -> Result<()> {
         debug_assert!(self.type_ == TrackerType::VMATracker);
+        debug_assert!(self.range().is_superset_of(range));
 
         vm_epc::commit_epc_for_user_space(range.start(), range.size())?;
 

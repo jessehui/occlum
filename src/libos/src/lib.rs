@@ -22,6 +22,7 @@
 #![feature(atomic_from_mut)]
 #![feature(btree_drain_filter)]
 #![feature(arbitrary_enum_discriminant)]
+#![feature(strict_provenance)]
 
 #[macro_use]
 extern crate alloc;

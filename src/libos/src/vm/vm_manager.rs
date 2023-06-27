@@ -37,9 +37,9 @@ impl VMManager {
         })
     }
 
-    pub fn init_with_mem_gap(vm_range: VMRange, gap_range: VMRange) -> Result<Self> {
+    pub fn init_with_mem_gap(vm_range: VMRange, gap_range: Option<VMRange>) -> Result<Self> {
         let mut internal = InternalVMManager::init(vm_range.clone());
-        let gap_range = if gap_range.size() != 0 {
+        let gap_range = if let Some(gap_range) = gap_range {
             debug_assert!(vm_range.is_superset_of(&gap_range));
             internal.scoop_gap(gap_range)?;
             Some(gap_range)

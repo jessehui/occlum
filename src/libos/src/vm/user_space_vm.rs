@@ -60,12 +60,10 @@ fn free_user_space() {
     // FIXME
     // pku_util::clear_pku_when_libos_exit(addr, size, RSRV_MEM_PERM.bits());
 
-    let gap_range = USER_SPACE_VM_MANAGER
-        .gap_range()
-        .expect("Gap range must exists");
+    let gap_range = USER_SPACE_VM_MANAGER.gap_range();
     USER_SPACE_VM_MANAGER
         .sgx_platform
-        .free_user_space(total_user_space_range, &gap_range);
+        .free_user_space(total_user_space_range, gap_range.as_ref());
 }
 
 impl Deref for UserSpaceVMManager {
