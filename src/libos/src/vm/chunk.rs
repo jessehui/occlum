@@ -100,7 +100,7 @@ impl Chunk {
             // Some(options.initializer().clone()),
             options.initializer().backed_file(),
             DUMMY_CHUNK_PROCESS_ID,
-            None,
+            // None,
         )
         .init_memory(options)?;
 
@@ -238,9 +238,11 @@ impl Chunk {
             ChunkType::SingleVMA(vma) => {
                 let mut vma = vma.lock().unwrap();
                 debug_assert!(vma.contains(pf_addr));
+                info!("lock vma = {:?}", vma);
                 return vma.handle_page_fault(pf_addr, kernel_triggers);
             }
             ChunkType::MultiVMA(internal_manager) => {
+                info!("lock multivma chunk");
                 return internal_manager
                     .lock()
                     .unwrap()

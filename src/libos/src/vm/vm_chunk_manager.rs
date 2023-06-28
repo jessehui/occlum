@@ -36,12 +36,12 @@ impl ChunkManager {
                 let range = VMRange::new_empty(start)?;
                 let perms = VMPerms::empty();
                 // sentry vma shouldn't belong to any process
-                VMAObj::new_vma_obj(VMArea::new(range, perms, None, 0, None))
+                VMAObj::new_vma_obj(VMArea::new(range, perms, None, 0))
             };
             let end_sentry = {
                 let range = VMRange::new_empty(end)?;
                 let perms = VMPerms::empty();
-                VMAObj::new_vma_obj(VMArea::new(range, perms, None, 0, None))
+                VMAObj::new_vma_obj(VMArea::new(range, perms, None, 0))
             };
             let mut new_tree = RBTree::new(VMAAdapter::new());
             new_tree.insert(start_sentry);
@@ -117,7 +117,7 @@ impl ChunkManager {
                 // Some(options.initializer().clone()),
                 options.initializer().backed_file(),
                 current_pid,
-                None,
+                // None,
             )
             .init_memory(options);
 
@@ -428,6 +428,10 @@ impl ChunkManager {
     }
 
     pub fn handle_page_fault(&mut self, pf_addr: usize, kernel_triggers: bool) -> Result<()> {
+        info!(
+            "chunk manager range = {:?}, free_size = {:?}",
+            self.range, self.free_size
+        );
         let mut vma_cursor = self.vmas.upper_bound_mut(Bound::Included(&pf_addr));
         if vma_cursor.is_null() {
             return_errno!(ENOMEM, "no mmap regions that contains the address");
