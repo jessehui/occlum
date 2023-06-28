@@ -32,7 +32,7 @@ impl UserSpaceVMManager {
         // FIXME
         // pku_util::pkey_mprotect_userspace_mem(addr, user_space_mem_size, RSRV_MEM_PERM.bits());
 
-        let vm_manager = VMManager::init_with_mem_gap(userspace_vm_range, gap_range)?;
+        let vm_manager = VMManager::init(userspace_vm_range, gap_range)?;
 
         Ok(Self {
             inner: vm_manager,

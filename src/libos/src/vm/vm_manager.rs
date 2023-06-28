@@ -28,24 +28,8 @@ pub struct VMManager {
 }
 
 impl VMManager {
-    pub fn init(vm_range: VMRange) -> Result<Self> {
-        let internal = InternalVMManager::init(vm_range.clone());
-        Ok(VMManager {
-            range: vm_range,
-            gap_range: None,
-            internal: SgxMutex::new(internal),
-        })
-    }
-
-    pub fn init_with_mem_gap(vm_range: VMRange, gap_range: Option<VMRange>) -> Result<Self> {
-        let mut internal = InternalVMManager::init(vm_range.clone());
-        let gap_range = if let Some(gap_range) = gap_range {
-            debug_assert!(vm_range.is_superset_of(&gap_range));
-            internal.scoop_gap(gap_range)?;
-            Some(gap_range)
-        } else {
-            None
-        };
+    pub fn init(vm_range: VMRange, gap_range: Option<VMRange>) -> Result<Self> {
+        let mut internal = InternalVMManager::init(vm_range.clone(), &gap_range);
         Ok(VMManager {
             range: vm_range,
             gap_range: gap_range,
@@ -70,13 +54,15 @@ impl VMManager {
     }
 
     pub fn verified_clean_when_exit(&self) -> bool {
+        let gap_size = if let Some(gap) = self.gap_range() {
+            gap.size()
+        } else {
+            0
+        };
+
         let internal = self.internal();
-        let gaps_size = internal
-            .gaps
-            .iter()
-            .fold(0, |acc, chunk| acc + chunk.range().size());
         internal.chunks.len() == 0
-            && internal.free_manager.free_size() + gaps_size == self.range.size()
+            && internal.free_manager.free_size() + gap_size == self.range.size()
     }
 
     pub fn free_chunk(&self, chunk: &ChunkRef) {
@@ -534,19 +520,27 @@ pub struct InternalVMManager {
     chunks: BTreeSet<ChunkRef>, // track in-use chunks, use B-Tree for better performance and simplicity (compared with red-black tree)
     fast_default_chunks: Vec<ChunkRef>, // empty default chunks
     free_manager: VMFreeSpaceManager,
-    gaps: Vec<ChunkRef>, // Memory gaps that shouldn't be accessed by users
 }
 
 impl InternalVMManager {
-    pub fn init(vm_range: VMRange) -> Self {
+    pub fn init(vm_range: VMRange, gap_range: &Option<VMRange>) -> Self {
         let chunks = BTreeSet::new();
         let fast_default_chunks = Vec::new();
-        let free_manager = VMFreeSpaceManager::new(vm_range);
+        let mut free_manager = VMFreeSpaceManager::new(vm_range);
+        if let Some(gap_range) = gap_range {
+            debug_assert!(vm_range.is_superset_of(&gap_range));
+            free_manager
+                .find_free_range_internal(
+                    gap_range.size(),
+                    PAGE_SIZE,
+                    VMMapAddr::Force(gap_range.start()),
+                )
+                .unwrap();
+        }
         Self {
             chunks,
             fast_default_chunks,
             free_manager,
-            gaps: Vec::new(),
         }
     }
 
@@ -579,19 +573,6 @@ impl InternalVMManager {
         trace!("allocate a new single vma chunk: {:?}", chunk);
         self.chunks.insert(chunk.clone());
         Ok(chunk)
-    }
-
-    // Scoop the gap from user space access. The gap chunk doesn't belong to any process and shouldn't be freed during runtime.
-    pub fn scoop_gap(&mut self, gap_range: VMRange) -> Result<()> {
-        let gap_range = self.free_manager.find_free_range_internal(
-            gap_range.size(),
-            PAGE_SIZE,
-            VMMapAddr::Force(gap_range.start()),
-        )?;
-        let vma = VMArea::new_gap(gap_range);
-        let gap_chunk = Arc::new(Chunk::new_chunk_with_vma(vma));
-        self.gaps.push(gap_chunk);
-        Ok(())
     }
 
     // Munmap a chunk
@@ -1017,19 +998,6 @@ impl InternalVMManager {
         }
 
         Ok(target_range.start())
-    }
-
-    pub fn handle_page_fault(&self, pf_addr: usize, kernel_triggers: bool) -> Result<()> {
-        let chunk = self
-            .chunks
-            .iter()
-            .find(|chunk| chunk.range().contains(pf_addr));
-
-        if let Some(chunk) = chunk {
-            chunk.handle_page_fault(pf_addr, kernel_triggers)
-        } else {
-            return_errno!(ENOMEM, "can't find containing VMA for given address");
-        }
     }
 }
 

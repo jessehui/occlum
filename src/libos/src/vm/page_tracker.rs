@@ -274,11 +274,16 @@ impl PageTracker {
         ret
     }
 
-    pub fn split_from_new_start(&mut self, new_start: usize) {
-        debug_assert!(self.range.start() <= new_start && new_start < self.range.end());
+    pub fn split_for_new_range(&mut self, new_range: &VMRange) {
+        debug_assert!(self.range.is_superset_of(new_range));
+        // debug_assert!(self.range.start() <= new_start && new_start < self.range.end());
+        let new_start = new_range.start();
+        let page_num = new_range.size() / PAGE_SIZE;
 
         let split_idx = (new_start - self.range.start()) / PAGE_SIZE;
-        let new_inner = self.inner.split_off(split_idx);
+        let mut new_inner = self.inner.split_off(split_idx);
+        // Safety: the set_len is used to shrink the bitvec, thus no need to initialize.
+        unsafe { new_inner.set_len(page_num) };
 
         trace!(
             "old range= {:?}, new_start = {:x}, idx = {:?}",
@@ -292,25 +297,32 @@ impl PageTracker {
             self.fully_committed = true;
         }
 
-        self.range.set_start(new_start);
+        self.range = *new_range;
     }
 
     // Commit memory for the whole current VMA (VMATracker)
-    pub fn commit_current_vma_whole(&mut self, need_update_global: bool) -> Result<()> {
+    pub fn commit_current_vma_whole(&mut self) -> Result<Vec<VMRange>> {
         debug_assert!(self.type_ == TrackerType::VMATracker);
+        let mut ret_vec = Vec::new();
+        let mut total_commit_size = 0;
 
         if self.is_fully_committed() {
-            return Ok(());
+            // return Ok(total_commit_size);
+            return Ok(ret_vec);
         }
 
         // Commit EPC
         if self.is_reserved_only() {
             vm_epc::commit_epc_for_user_space(self.range().start(), self.range().size()).unwrap();
+            // total_commit_size += self.range().size();
+            ret_vec.push(self.range().clone());
         } else {
             debug_assert!(self.is_partially_committed());
             let uncommitted_ranges = self.get_ranges(false);
             for range in uncommitted_ranges {
                 vm_epc::commit_epc_for_user_space(range.start(), range.size()).unwrap();
+                // total_commit_size += range.size();
+                ret_vec.push(range);
             }
         }
 
@@ -318,11 +330,11 @@ impl PageTracker {
         self.inner.fill(true);
         self.fully_committed = true;
 
-        if need_update_global {
-            self.update_pages_for_global_tracker(self.range().start(), self.range().size());
-        }
+        // if need_update_global {
+        self.update_pages_for_global_tracker(self.range().start(), self.range().size());
+        // }
 
-        Ok(())
+        Ok(ret_vec)
     }
 
     // Commit memory of a specific range for the current VMA (VMATracker). The range should be verified by caller.

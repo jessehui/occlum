@@ -38,27 +38,6 @@ impl VMPerms {
         self.bits == Self::DEFAULT.bits
     }
 
-    pub fn can_lazy_extend(old_perms: VMPerms, new_perms: VMPerms) -> bool {
-        debug_assert!(old_perms != new_perms);
-
-        if old_perms > new_perms {
-            return false;
-        }
-
-        if old_perms == VMPerms::NONE || old_perms == VMPerms::READ {
-            return true;
-        }
-        if old_perms == VMPerms::READ | VMPerms::WRITE {
-            return new_perms - old_perms >= VMPerms::EXEC;
-        }
-        if old_perms == VMPerms::READ | VMPerms::EXEC {
-            return new_perms - old_perms >= VMPerms::WRITE;
-        }
-
-        // TODO: Maybe there is other rules, we can add them when we identify them.
-        return false;
-    }
-
     pub fn display(&self) -> String {
         let mut str = String::new();
         if self.can_read() {

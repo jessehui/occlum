@@ -253,15 +253,24 @@ impl EPCMemType {
     pub fn new(range: &VMRange) -> Self {
         trace!("EPC new range = {:?}", range);
         if rsgx_is_supported_EDMM() {
-            let gap_range = USER_SPACE_VM_MANAGER
-                .gap_range()
-                .expect("gap range must exist");
-            debug_assert!(!gap_range.is_superset_of(range));
-            if range.end() <= gap_range.start() {
-                EPCMemType::Reserved
+            if let Some(gap_range) = USER_SPACE_VM_MANAGER.gap_range() {
+                debug_assert!({
+                    if range.size() > 0 {
+                        !gap_range.is_superset_of(range)
+                    } else {
+                        // Ignore for sentry VMA
+                        true
+                    }
+                });
+                if range.end() <= gap_range.start() {
+                    EPCMemType::Reserved
+                } else {
+                    debug_assert!(gap_range.end() <= range.start());
+                    EPCMemType::UserRegion
+                }
             } else {
-                debug_assert!(gap_range.end() <= range.start());
-                EPCMemType::UserRegion
+                // There is no gap, this indicates that there is no user region memory
+                EPCMemType::Reserved
             }
         } else {
             // Only reserved memory
@@ -276,8 +285,8 @@ impl EPCMemType {
         prot.remove(VMPerms::GROWSDOWN);
 
         match self {
-            EPCMemType::Reserved => ReservedMem::modify_protection(addr, length, protection),
-            EPCMemType::UserRegion => UserRegionMem::modify_protection(addr, length, protection),
+            EPCMemType::Reserved => ReservedMem::modify_protection(addr, length, prot),
+            EPCMemType::UserRegion => UserRegionMem::modify_protection(addr, length, prot),
             EPCMemType::Gap => unreachable!(),
         }
     }
