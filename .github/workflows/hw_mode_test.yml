@@ -52,7 +52,7 @@ jobs:
     - uses: ./.github/workflows/composite_action/hw
       with:
         container-name: ${{ github.job }}
-        build-envs: 'OCCLUM_RELEASE_BUILD=1'
+        build-envs: 'OCCLUM_RELEASE_BUILD=N'
 
     - name: Integration test
       run:  docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum; OCCLUM_LOG_LEVEL=trace OCCLUM_DISABLE_DCAP=1 make test"
@@ -96,7 +96,7 @@ jobs:
     - uses: ./.github/workflows/composite_action/hw
       with:
         container-name: ${{ github.job }}
-        build-envs: 'OCCLUM_RELEASE_BUILD=1'
+        build-envs: 'OCCLUM_RELEASE_BUILD=N'
 
     - name: C test
       run: docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum/demos/hello_c && make;
@@ -191,7 +191,7 @@ jobs:
     - uses: ./.github/workflows/composite_action/hw
       with:
         container-name: ${{ github.job }}
-        build-envs: 'OCCLUM_RELEASE_BUILD=1'
+        build-envs: 'OCCLUM_RELEASE_BUILD=N'
 
     - name: Compile Java
       run: docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum/demos/java && occlum-javac ./hello_world/Main.java"
@@ -241,7 +241,7 @@ jobs:
     - uses: ./.github/workflows/composite_action/hw
       with:
         container-name: ${{ github.job }}
-        build-envs: 'OCCLUM_RELEASE_BUILD=1'
+        build-envs: 'OCCLUM_RELEASE_BUILD=N'
 
     - name: Install bazel
       run: docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum/demos/hello_bazel && wget https://github.com/bazelbuild/bazel/releases/download/3.2.0/bazel-3.2.0-installer-linux-x86_64.sh;
@@ -293,7 +293,7 @@ jobs:
     - uses: ./.github/workflows/composite_action/hw
       with:
         container-name: ${{ github.job }}
-        build-envs: 'OCCLUM_RELEASE_BUILD=1'
+        build-envs: 'OCCLUM_RELEASE_BUILD=N'
 
     - name: Build Fish dependencies
       run: docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum/demos/fish && ./download_and_build.sh"
@@ -340,7 +340,7 @@ jobs:
     - uses: ./.github/workflows/composite_action/hw
       with:
         container-name: ${{ github.job }}
-        build-envs: 'OCCLUM_RELEASE_BUILD=1'
+        build-envs: 'OCCLUM_RELEASE_BUILD=N'
 
     - name: Preinstall dependencies and build xgboost
       run: docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum/demos/xgboost && ./preinstall_deps.sh && ./download_and_build_xgboost.sh"
@@ -387,7 +387,7 @@ jobs:
     - uses: ./.github/workflows/composite_action/hw
       with:
         container-name: ${{ github.job }}
-        build-envs: 'OCCLUM_RELEASE_BUILD=1'
+        build-envs: 'OCCLUM_RELEASE_BUILD=N'
 
     - name: Build sqlite dependencies
       run: docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum/demos/sqlite && ./download_and_build_sqlite.sh"
@@ -458,7 +458,7 @@ jobs:
       run: docker exec $python_musl_support_test bash -c "cargo uninstall sccache || true; cd /root/occlum; make submodule"
 
     - name: Make install
-      run: docker exec $python_musl_support_test bash -c "source /opt/intel/sgxsdk/environment; cd /root/occlum; OCCLUM_RELEASE_BUILD=1 make install"
+      run: docker exec $python_musl_support_test bash -c "source /opt/intel/sgxsdk/environment; cd /root/occlum; OCCLUM_RELEASE_BUILD=N make install"
 
     - name: Run python musl support test
       run: docker exec $python_musl_support_test bash -c "cd /root/occlum/demos/python/python_musl; ./run_python_on_occlum.sh"
@@ -529,7 +529,7 @@ jobs:
       run: docker exec $openvino_test bash -c "cargo uninstall sccache || true; cd /root/occlum; make submodule"
 
     - name: Make install
-      run: docker exec $openvino_test bash -c "source /opt/intel/sgxsdk/environment; cd /root/occlum; OCCLUM_RELEASE_BUILD=1 make install"
+      run: docker exec $openvino_test bash -c "source /opt/intel/sgxsdk/environment; cd /root/occlum; make install"
 
     - name: Run openVINO benchmark
       run: docker exec $openvino_test bash -c "cd /root/demos/openvino && ./run_benchmark_on_occlum.sh"
@@ -597,7 +597,7 @@ jobs:
       run: docker exec $grpc_test bash -c "cargo uninstall sccache || true; cd /root/occlum; make submodule"
 
     - name: Make install
-      run: docker exec $grpc_test bash -c "source /opt/intel/sgxsdk/environment; cd /root/occlum; OCCLUM_RELEASE_BUILD=y make install"
+      run: docker exec $grpc_test bash -c "source /opt/intel/sgxsdk/environment; cd /root/occlum; make install"
 
     - name: Prepare grpc musl sample project
       run: docker exec $grpc_test bash -c "cd /root/demos/grpc/grpc_musl && ./prepare_client_server.sh"
@@ -687,7 +687,7 @@ jobs:
       run: docker exec $gvisor_test bash -c "cargo uninstall sccache || true; cd /root/occlum; make submodule"
 
     - name: Make install
-      run: docker exec $gvisor_test bash -c "source /opt/intel/sgxsdk/environment; cd /root/occlum; OCCLUM_RELEASE_BUILD=y make install"
+      run: docker exec $gvisor_test bash -c "source /opt/intel/sgxsdk/environment; cd /root/occlum; make install"
 
     - name: Clone gvisor code
       run: docker exec $gvisor_test bash -c "git clone https://github.com/occlum/gvisor.git"
@@ -837,7 +837,7 @@ jobs:
       run: docker exec $tf_serving_test bash -c "cd /root/occlum; make submodule"
 
     - name: Make install
-      run: docker exec $tf_serving_test bash -c "source /opt/intel/sgxsdk/environment; cd /root/occlum; OCCLUM_RELEASE_BUILD=1 make install"
+      run: docker exec $tf_serving_test bash -c "source /opt/intel/sgxsdk/environment; cd /root/occlum; make install"
 
     - name: Move dependencies to current demo
       run: docker exec $tf_serving_test bash -c "mv /root/tensorflow_model_server /root/occlum/demos/tensorflow/tensorflow_serving; mv /root/resnet50-v15-fp32 /root/occlum/demos/tensorflow/tensorflow_serving"
@@ -889,7 +889,7 @@ jobs:
     - uses: ./.github/workflows/composite_action/hw
       with:
         container-name: ${{ github.job }}
-        build-envs: 'OCCLUM_RELEASE_BUILD=1'
+        build-envs: 'OCCLUM_RELEASE_BUILD=N'
 
     - name: Build and run remote attestation demo
       run: docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum/demos/remote_attestation/dcap; ./run_dcap_quote_on_occlum.sh"
@@ -929,7 +929,7 @@ jobs:
     - uses: ./.github/workflows/composite_action/hw
       with:
         container-name: ${{ github.job }}
-        build-envs: 'OCCLUM_RELEASE_BUILD=1'
+        build-envs: 'OCCLUM_RELEASE_BUILD=N'
 
     - name: Install dependencies
       run: docker exec ${{ env.CONTAINER_NAME }} bash -c "apt update && apt install -y netcat"
@@ -983,7 +983,7 @@ jobs:
     - uses: ./.github/workflows/composite_action/hw
       with:
         container-name: ${{ github.job }}
-        build-envs: 'OCCLUM_RELEASE_BUILD=1'
+        build-envs: 'OCCLUM_RELEASE_BUILD=N'
 
     - name: Preinstall dependencies and build mysql
       run: docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum/demos/mysql && ./preinstall_deps.sh && ./dl_and_build_mysql.sh"
@@ -1031,7 +1031,7 @@ jobs:
     - uses: ./.github/workflows/composite_action/hw
       with:
         container-name: ${{ github.job }}
-        build-envs: 'OCCLUM_RELEASE_BUILD=1'
+        build-envs: 'OCCLUM_RELEASE_BUILD=N'
 
     - name: Install OpenJDK 11 (Glibc)
       run: docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum/demos/netty_ut && ./preinstall_deps.sh"
@@ -1069,7 +1069,7 @@ jobs:
     - uses: ./.github/workflows/composite_action/hw
       with:
         container-name: ${{ github.job }}
-        build-envs: 'OCCLUM_RELEASE_BUILD=1'
+        build-envs: 'OCCLUM_RELEASE_BUILD=N'
 
     - name: Stress test with musl
       run:  docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum; make test times=${{ env.repeat_times }}"
@@ -1104,7 +1104,7 @@ jobs:
     - uses: ./.github/workflows/composite_action/hw
       with:
         container-name: ${{ github.job }}
-        build-envs: 'OCCLUM_RELEASE_BUILD=1'
+        build-envs: 'OCCLUM_RELEASE_BUILD=N'
 
     - name: Stress test with Glibc
       run:  docker exec ${{ env.CONTAINER_NAME }} bash -c "cd /root/occlum; make test-glibc times=${{ env.repeat_times }}"
