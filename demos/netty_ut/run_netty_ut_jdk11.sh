@@ -18,8 +18,8 @@ init_instance() {
     rm -rf occlum_netty_ut_instance && occlum new occlum_netty_ut_instance
     cd occlum_netty_ut_instance
     new_json="$(jq '.resource_limits.user_space_size = "1MB" |
-                .resource_limits.user_space_max_size = "4680MB" |
-                .resource_limits.kernel_space_heap_size="1MB" |
+	        .resource_limits.user_space_max_size = "4680MB" |
+	        .resource_limits.kernel_space_heap_size="1MB" |
                 .resource_limits.kernel_space_heap_max_size="64MB" |
                 .resource_limits.max_num_of_threads = 128 |
                 .process.default_heap_size = "512MB" |

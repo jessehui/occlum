@@ -299,6 +299,12 @@ impl VMArea {
             return self.commit_current_vma_whole();
         }
 
+        // if self.range().start() & 0xfff_ffff == 0x8d9a000 {
+        // if self.range().size() == 0x270000 {
+        //     info!("pattern catch");
+        //     return self.commit_current_vma_whole();
+        // }
+
         // The return commit_size can be 0 when other threads already commit the PF-containing range but the vma is not fully committed yet.
         let commit_size = self.commit_once_for_page_fault(pf_addr).unwrap();
 
@@ -505,7 +511,7 @@ impl VMArea {
         initializer: Option<&VMInitializer>,
     ) -> Result<()> {
         debug_assert!(self.range().is_superset_of(target_range));
-        trace!("init range = {:?}", target_range);
+        info!("init range = {:?}", target_range);
         let init_file = self
             .init_file()
             .map(|(file, offset)| (file.clone(), offset));
@@ -647,15 +653,15 @@ impl VMArea {
                 } else {
                     info!("pf addr = 0x{:x}, uncommitted range = {:?}", pf_addr, range);
                     // TODO: Support commit memory from the nearest page of the page fault
-                    // let old_start = range.start();
-                    // let pf_page_addr = align_down(pf_addr, PAGE_SIZE);
-                    // range.set_start(pf_page_addr);
-                    // debug_assert!(range.start() >= old_start);
-                    // if range.start() != old_start {
-                    //     debug_assert!(pf_addr != range.start());
-                    //     debug_assert!(pf_addr - range.start() < PAGE_SIZE);
-                    //     info!("set commit range start from old start address: {:x}, to new start address: {:x}", old_start, range.start());
-                    // }
+                    let old_start = range.start();
+                    let pf_page_addr = align_down(pf_addr, PAGE_SIZE);
+                    range.set_start(pf_page_addr);
+                    debug_assert!(range.start() >= old_start);
+                    if range.start() != old_start {
+                        debug_assert!(pf_addr != range.start());
+                        debug_assert!(pf_addr - range.start() < PAGE_SIZE);
+                        info!("set commit range start from old start address: {:x}, to new start address: {:x}", old_start, range.start());
+                    }
                     info!("target commit range = {:?}", range);
                 }
             }

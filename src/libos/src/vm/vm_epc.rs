@@ -120,11 +120,14 @@ impl EPCAllocator for UserRegionMem {
         let ptr = unsafe { EmmAlloc.alloc(AllocAddr::Any, size, alloc_options) }
             .map_err(|e| errno!(Errno::from(e as u32)))?;
 
+        // unsafe {EmmAlloc.uncommit(ptr, size) }.map_err(|e| errno!(Errno::from(e as u32)))?;
+
         Ok(ptr.addr().get())
     }
 
     fn free(addr: usize, size: usize) -> Result<()> {
         let ptr = NonNull::<u8>::new(addr as *mut u8).unwrap();
+        unsafe { EmmAlloc.uncommit(ptr, size) }.map_err(|e| errno!(Errno::from(e as u32)))?;
         unsafe { EmmAlloc.dealloc(ptr, size) }.map_err(|e| errno!(Errno::from(e as u32)))?;
         Ok(())
     }
@@ -293,11 +296,20 @@ impl EPCMemType {
 }
 
 pub fn commit_epc_for_user_space(start_addr: usize, size: usize) -> Result<()> {
-    trace!(
-        "commit epc: {:?}",
-        VMRange::new_with_size(start_addr, size).unwrap()
-    );
-    UserRegionMem::commit_memory(start_addr, size)
+    let range = VMRange::new_with_size(start_addr, size).unwrap();
+    info!("commit epc: {:?}", range);
+    let ret = UserRegionMem::commit_memory(start_addr, size);
+    // info!("first check target range is all 0");
+    // assert!(ret.is_ok());
+    // unsafe {
+    //     let buf = range.as_slice();
+    //     let ret: u8 = buf.iter().sum();
+    //     if ret != 0 {
+    //         panic!("something is wrong");
+    //     }
+    // }
+    // info!("check done");
+    ret
 }
 
 // This is a dummy function for sgx_mm_alloc. The real handler is "enclave_page_fault_handler" shown below.

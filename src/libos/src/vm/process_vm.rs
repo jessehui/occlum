@@ -543,8 +543,10 @@ impl ProcessVM {
             // For test only:
             // } else if flags.contains(MMapFlags::MAP_ANONYMOUS) {
             //     PagePolicy::CommitNow
+            // } else if size == 0x10000 {
+            //     PagePolicy::CommitNow
             } else {
-                PagePolicy::CommitOnDemand
+                PagePolicy::CommitNow
             }
         };
         let mmap_options = VMMapOptionsBuilder::default()

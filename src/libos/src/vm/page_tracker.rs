@@ -266,9 +266,23 @@ impl PageTracker {
         if committed {
             trace!("get committed ranges = {:?}", ret);
             debug_assert!(total_size == self.inner.count_ones() * PAGE_SIZE);
+            {
+                for range in ret.iter() {
+                    let idx = (range.start() - tracker_start_addr) / PAGE_SIZE;
+                    let page_num = range.size() / PAGE_SIZE;
+                    debug_assert!(self.inner[idx..idx + page_num].all());
+                }
+            }
         } else {
             trace!("get uncommitted ranges = {:?}", ret);
             debug_assert!(total_size == self.inner.count_zeros() * PAGE_SIZE);
+            {
+                for range in ret.iter() {
+                    let idx = (range.start() - tracker_start_addr) / PAGE_SIZE;
+                    let page_num = range.size() / PAGE_SIZE;
+                    debug_assert!(self.inner[idx..idx + page_num].not_any());
+                }
+            }
         }
 
         ret
@@ -341,7 +355,7 @@ impl PageTracker {
     pub fn commit_range_for_current_vma(&mut self, range: &VMRange) -> Result<()> {
         debug_assert!(self.type_ == TrackerType::VMATracker);
         debug_assert!(self.range().is_superset_of(range));
-
+        info!("commit range for current_vma");
         vm_epc::commit_epc_for_user_space(range.start(), range.size())?;
 
         self.commit_pages_internal(range.start(), range.size());

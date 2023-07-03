@@ -82,6 +82,7 @@ impl VMRange {
     }
 
     pub fn is_superset_of(&self, other: &VMRange) -> bool {
+        info!("self range = {:?}, other range = {:?}", self, other);
         self.start() <= other.start() && other.end() <= self.end()
     }
 

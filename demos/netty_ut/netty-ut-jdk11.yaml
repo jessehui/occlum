@@ -7,3 +7,7 @@ targets:
     copy: 
       - dirs:
           - ../netty
+  - target: /bin
+    copy:
+      - files:
+        - /opt/occlum/toolchains/busybox/glibc/busybox

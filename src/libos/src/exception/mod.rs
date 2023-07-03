@@ -45,7 +45,8 @@ extern "C" fn handle_exception(info: *mut sgx_exception_info_t) -> i32 {
                 return SGX_MM_EXCEPTION_CONTINUE_SEARCH;
             } else {
                 // kernel code triggers #PF. This can happen e.g. when read syscall triggers user buffer #PF.
-                info!("kernel code triggers #PF");
+                let user_context = CpuContext::from_sgx(&info.cpu_context);
+                info!("kernel code triggers #PF, cpu context = {:?}", user_context);
                 let kernel_triggers = true;
                 enclave_page_fault_handler(info.exinfo, kernel_triggers)
                     .expect("handle PF failure");
