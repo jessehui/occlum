@@ -707,8 +707,7 @@ impl InternalVMManager {
                 (true, true) => {
                     // Exact the same vma
                     containing_vma.set_perms(new_perms);
-                    containing_vma
-                        .modify_permissions_for_committed_pages(old_perms, new_perms, false);
+                    containing_vma.modify_permissions_for_committed_pages(old_perms, new_perms);
                     return Ok(());
                 }
                 (false, false) => {
@@ -727,7 +726,7 @@ impl InternalVMManager {
                         new_perms,
                         DUMMY_CHUNK_PROCESS_ID,
                     );
-                    new_vma.modify_permissions_for_committed_pages(old_perms, new_perms, false);
+                    new_vma.modify_permissions_for_committed_pages(old_perms, new_perms);
 
                     let remaining_old_vma = {
                         let range = VMRange::new(protect_range.end(), old_end).unwrap();
@@ -753,7 +752,7 @@ impl InternalVMManager {
                         new_perms,
                         DUMMY_CHUNK_PROCESS_ID,
                     );
-                    new_vma.modify_permissions_for_committed_pages(old_perms, new_perms, false);
+                    new_vma.modify_permissions_for_committed_pages(old_perms, new_perms);
 
                     if same_start {
                         // Protect range is at left side of the containing vma

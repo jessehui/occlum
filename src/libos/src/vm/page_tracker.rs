@@ -79,7 +79,6 @@ impl GlobalPageChunk {
 enum TrackerType {
     GlobalTracker, // PAGE_CHUNK_UNIT size for global management to track the global paging status
     VMATracker,    // various size for different vma to track its own paging status
-    GapTracker,    // Tracking for range which shouldn't be touched by users
 }
 
 // Used for tracking the paging status of global tracker or VMA tracker
@@ -149,18 +148,6 @@ impl PageTracker {
         };
 
         Ok(new_vma_tracker)
-    }
-
-    pub fn new_gap_tracker(gap_range: &VMRange) -> Result<Self> {
-        let page_num = gap_range.size() / PAGE_SIZE;
-        let new_gap_tracker = Self {
-            type_: TrackerType::GapTracker,
-            range: gap_range.clone(),
-            inner: bitvec![0; page_num],
-            fully_committed: false,
-        };
-
-        Ok(new_gap_tracker)
     }
 
     pub fn range(&self) -> &VMRange {
@@ -282,8 +269,7 @@ impl PageTracker {
 
         let split_idx = (new_start - self.range.start()) / PAGE_SIZE;
         let mut new_inner = self.inner.split_off(split_idx);
-        // Safety: the set_len is used to shrink the bitvec, thus no need to initialize.
-        unsafe { new_inner.set_len(page_num) };
+        new_inner.truncate(page_num);
 
         trace!(
             "old range= {:?}, new_start = {:x}, idx = {:?}",
@@ -304,24 +290,20 @@ impl PageTracker {
     pub fn commit_current_vma_whole(&mut self) -> Result<Vec<VMRange>> {
         debug_assert!(self.type_ == TrackerType::VMATracker);
         let mut ret_vec = Vec::new();
-        let mut total_commit_size = 0;
 
         if self.is_fully_committed() {
-            // return Ok(total_commit_size);
             return Ok(ret_vec);
         }
 
         // Commit EPC
         if self.is_reserved_only() {
             vm_epc::commit_epc_for_user_space(self.range().start(), self.range().size()).unwrap();
-            // total_commit_size += self.range().size();
             ret_vec.push(self.range().clone());
         } else {
             debug_assert!(self.is_partially_committed());
             let uncommitted_ranges = self.get_ranges(false);
             for range in uncommitted_ranges {
                 vm_epc::commit_epc_for_user_space(range.start(), range.size()).unwrap();
-                // total_commit_size += range.size();
                 ret_vec.push(range);
             }
         }
@@ -330,9 +312,7 @@ impl PageTracker {
         self.inner.fill(true);
         self.fully_committed = true;
 
-        // if need_update_global {
         self.update_pages_for_global_tracker(self.range().start(), self.range().size());
-        // }
 
         Ok(ret_vec)
     }
@@ -355,10 +335,11 @@ impl PageTracker {
         debug_assert!(self.type_ == TrackerType::VMATracker);
         let mut vma_tracker = self;
         trace!("vma_tracker = {:?}", vma_tracker);
-        let mut page_chunk_addr = get_page_chunk_start_addr(vma_tracker.range().start());
+        let mut page_chunk_start = get_page_chunk_start_addr(vma_tracker.range().start());
 
         let range_end = vma_tracker.range().end();
-        while (page_chunk_addr < range_end) {
+        // while (page_chunk_addr < range_end) {
+        for page_chunk_addr in (page_chunk_start..range_end).step_by(PAGE_CHUNK_UNIT) {
             // trace!("page_chunk_addr = {:x}, range_end = {:x}", page_chunk_addr, range_end);
             let manager = USER_SPACE_PAGE_CHUNK_MANAGER.read().unwrap();
             if let Some(page_chunk) = manager.inner.get(&page_chunk_addr) {
@@ -394,9 +375,6 @@ impl PageTracker {
                     .inner
                     .insert(page_chunk_addr, page_chunk);
             }
-
-            // Update page chunk addr for next loop
-            page_chunk_addr = page_chunk_addr + PAGE_CHUNK_UNIT;
         }
 
         Ok(())
@@ -435,14 +413,15 @@ impl PageTracker {
         debug_assert!(self.type_ == TrackerType::VMATracker);
 
         let commit_end_addr = commit_start_addr + commit_size;
-        let mut page_chunk_start_addr = get_page_chunk_start_addr(commit_start_addr);
-        while (page_chunk_start_addr < commit_end_addr) {
+        let page_chunk_start_addr = get_page_chunk_start_addr(commit_start_addr);
+        // while (page_chunk_start_addr < commit_end_addr) {
+        for page_chunk_addr in (page_chunk_start_addr..commit_end_addr).step_by(PAGE_CHUNK_UNIT) {
             let is_global_tracker_fully_committed = {
                 // Find the correponding page chunk
                 let manager = USER_SPACE_PAGE_CHUNK_MANAGER.read().unwrap();
                 let page_chunk = manager
                     .inner
-                    .get(&page_chunk_start_addr)
+                    .get(&page_chunk_addr)
                     .expect("this page chunk must exist");
 
                 // Update the global page tracker
@@ -455,7 +434,7 @@ impl PageTracker {
                     // page_tracker is none, the page chunk is fully committed. Go to next chunk.
                     debug_assert!(page_chunk.fully_committed);
                     trace!("update_global_tracker 2");
-                    page_chunk_start_addr = page_chunk_start_addr + PAGE_CHUNK_UNIT;
+                    // page_chunk_start_addr = page_chunk_start_addr + PAGE_CHUNK_UNIT;
                     continue;
                 }
             };
@@ -465,26 +444,23 @@ impl PageTracker {
                 // Update the global page chunk manager. Need to acquire the write lock this time. There can be data race because the lock
                 // could be dropped for a while before acquire again. But its fine, because the ultimate state is the same.
                 let mut manager = USER_SPACE_PAGE_CHUNK_MANAGER.write().unwrap();
-                if let Some(mut page_chunk) = manager.inner.get_mut(&page_chunk_start_addr) {
+                if let Some(mut page_chunk) = manager.inner.get_mut(&page_chunk_addr) {
                     trace!("update_global_tracker 3");
                     page_chunk.fully_committed = true;
                     page_chunk.tracker = None;
                 } else {
                     warn!(
                         "the global page chunk with start addr: 0x{:x} has been freed already",
-                        page_chunk_start_addr
+                        page_chunk_addr
                     );
                     unreachable!();
                 }
             }
-
-            page_chunk_start_addr = page_chunk_start_addr + PAGE_CHUNK_UNIT;
         }
     }
 
     // Commit pages for page tracker itself. This is a common method for both VMATracker and GlobalTracker.
     fn commit_pages_internal(&mut self, start_addr: usize, size: usize) {
-        debug_assert!(self.type_ != TrackerType::GapTracker);
         debug_assert!(!self.fully_committed);
 
         if let Some(intersection_range) = {

@@ -59,20 +59,6 @@ impl VMArea {
         new_vma
     }
 
-    // Create the VMA specifically for the gap
-    pub fn new_gap(gap_range: VMRange) -> Self {
-        let epc_type = EPCMemType::Gap;
-        let new_vma = Self {
-            range: gap_range,
-            perms: VMPerms::default(),
-            file_backed: None,
-            pid: 0,
-            pages: None,
-            epc_type,
-        };
-        new_vma
-    }
-
     fn new_with_page_tracker(
         range: VMRange,
         perms: VMPerms,
@@ -263,7 +249,6 @@ impl VMArea {
         &mut self,
         old_perms: VMPerms,
         new_perms: VMPerms,
-        force: bool,
     ) {
         if self.is_fully_committed() {
             self.modify_protection_force(None, new_perms);
@@ -363,11 +348,7 @@ impl VMArea {
             // Extend this VMA
             let pages = {
                 let pages = PageTracker::new_vma_tracker(&self.range, &self.epc_type).unwrap();
-                if pages.is_fully_committed() {
-                    None
-                } else {
-                    Some(pages)
-                }
+                (!pages.is_fully_committed()).then_some(pages)
             };
             self.pages = pages;
         } else {
@@ -438,11 +419,7 @@ impl VMArea {
         self.range.set_end(new_end);
         let pages = if self.range.size() > 0 {
             let pages = PageTracker::new_vma_tracker(&self.range, &self.epc_type).unwrap();
-            if pages.is_fully_committed() {
-                None
-            } else {
-                Some(pages)
-            }
+            (!pages.is_fully_committed()).then_some(pages)
         } else {
             // self.range.size() == 0
             None
@@ -487,11 +464,7 @@ impl VMArea {
     }
 
     fn modify_protection_force(&self, protect_range: Option<&VMRange>, new_perms: VMPerms) {
-        let protect_range = if let Some(range) = protect_range {
-            range
-        } else {
-            self.range()
-        };
+        let protect_range = protect_range.unwrap_or_else(|| self.range());
 
         self.epc_type
             .modify_protection(protect_range.start(), protect_range.size(), new_perms)
@@ -582,7 +555,6 @@ impl VMArea {
     fn init_committed_memory(&mut self, initializer: &VMInitializer) -> Result<()> {
         debug_assert!(self.is_partially_committed());
         let committed = true;
-        let is_handle_pf = false;
         for range in self.pages().get_ranges(committed) {
             trace!("init committed memory: {:?}", range);
             self.init_committed_memory_internal(&range, Some(initializer))?;
@@ -646,32 +618,15 @@ impl VMArea {
                     continue;
                 } else {
                     info!("pf addr = 0x{:x}, uncommitted range = {:?}", pf_addr, range);
-                    // TODO: Support commit memory from the nearest page of the page fault
-                    // let old_start = range.start();
-                    // let pf_page_addr = align_down(pf_addr, PAGE_SIZE);
-                    // range.set_start(pf_page_addr);
-                    // debug_assert!(range.start() >= old_start);
-                    // if range.start() != old_start {
-                    //     debug_assert!(pf_addr != range.start());
-                    //     debug_assert!(pf_addr - range.start() < PAGE_SIZE);
-                    //     info!("set commit range start from old start address: {:x}, to new start address: {:x}", old_start, range.start());
-                    // }
+                    range.set_start(align_down(pf_addr, PAGE_SIZE));
+                    range.resize(std::cmp::min(range.size(), COMMIT_ONCE_SIZE));
                     info!("target commit range = {:?}", range);
                 }
-            }
-
-            if range.size() + total_commit_size > COMMIT_ONCE_SIZE {
-                info!("before resize, target range = {:?}", range);
-                let old_size = range.size();
+            } else if range.size() + total_commit_size > COMMIT_ONCE_SIZE {
+                // This is not first time commit. Try to commit until reaching the COMMIT_ONCE_SIZE
                 range.resize(COMMIT_ONCE_SIZE - total_commit_size);
-
-                // For the first time commit, the range must contain the #PF address
-                if total_commit_size == 0 && !range.contains(pf_addr) {
-                    // Resize back if the new range doesn't contain #PF address
-                    range.resize(old_size);
-                }
-                info!("after resize, target range = {:?}", range);
             }
+            info!("after resize, target range = {:?}", range);
 
             // Commit memory
             self.pages
