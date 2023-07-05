@@ -29,14 +29,10 @@ pub enum SGXPlatform {
 pub enum EPCMemType {
     Reserved,
     UserRegion,
-    Gap,
 }
 
 pub struct ReservedMem;
 pub struct UserRegionMem;
-pub struct GapMem;
-
-// const EMM_ALLOCATOR: EmmAlloc = EmmAlloc;
 
 pub trait EPCAllocator {
     fn alloc(size: usize) -> Result<usize> {
@@ -232,18 +228,11 @@ impl SGXPlatform {
     }
 }
 
-impl EPCAllocator for GapMem {
-    fn mem_type() -> EPCMemType {
-        EPCMemType::Gap
-    }
-}
-
 impl Debug for EPCMemType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let output_str = match self {
             EPCMemType::Reserved => "reserved memory region",
             EPCMemType::UserRegion => "user region memory",
-            EPCMemType::Gap => "gap memory",
         };
         write!(f, "{}", output_str)
     }
@@ -287,7 +276,6 @@ impl EPCMemType {
         match self {
             EPCMemType::Reserved => ReservedMem::modify_protection(addr, length, prot),
             EPCMemType::UserRegion => UserRegionMem::modify_protection(addr, length, prot),
-            EPCMemType::Gap => unreachable!(),
         }
     }
 }
