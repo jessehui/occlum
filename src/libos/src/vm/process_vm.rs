@@ -153,7 +153,7 @@ impl<'a, 'b> ProcessVMBuilder<'a, 'b> {
             .size(heap_layout.size())
             .align(heap_layout.align())
             .perms(VMPerms::READ | VMPerms::WRITE)
-            .page_policy(PagePolicy::CommitOnDemand)
+            .page_policy(PagePolicy::CommitNow)
             .build()
             .map_err(|e| {
                 &self.handle_error_when_init(&chunks);
@@ -544,7 +544,8 @@ impl ProcessVM {
             // } else if flags.contains(MMapFlags::MAP_ANONYMOUS) {
             //     PagePolicy::CommitNow
             } else {
-                PagePolicy::CommitOnDemand
+                // PagePolicy::CommitOnDemand
+                PagePolicy::CommitNow
             }
         };
         let mmap_options = VMMapOptionsBuilder::default()
