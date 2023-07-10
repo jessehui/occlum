@@ -321,6 +321,8 @@ impl VMManager {
             }
             chunks
         };
+        // Brk should only manipulate one heap chunk
+        debug_assert!(intersect_chunks.len() == 1);
 
         intersect_chunks.iter().for_each(|chunk| {
             if let ChunkType::SingleVMA(vma) = chunk.internal() {
@@ -497,7 +499,13 @@ impl VMManager {
         assert!(mem_chunks.len() == 0);
     }
 
-    pub fn handle_page_fault(&self, pf_addr: usize, kernel_triggers: bool) -> Result<()> {
+    pub fn handle_page_fault(
+        &self,
+        rip: usize,
+        pf_addr: usize,
+        errcd: u32,
+        kernel_triggers: bool,
+    ) -> Result<()> {
         let current = current!();
         let current_process_mem_chunks = current.vm().mem_chunks().read().unwrap();
 
@@ -505,7 +513,7 @@ impl VMManager {
             .iter()
             .find(|chunk| chunk.range().contains(pf_addr))
         {
-            page_fault_chunk.handle_page_fault(pf_addr, kernel_triggers)
+            page_fault_chunk.handle_page_fault(rip, pf_addr, errcd, kernel_triggers)
         } else {
             // This can happen for example, when the user intends to trigger the SIGSEGV handler by visit nullptr.
             return_errno!(ENOMEM, "can't find the chunk containing the address");

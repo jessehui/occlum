@@ -287,7 +287,7 @@ impl PageTracker {
     }
 
     // Commit memory for the whole current VMA (VMATracker)
-    pub fn commit_current_vma_whole(&mut self) -> Result<Vec<VMRange>> {
+    pub fn commit_current_vma_whole(&mut self, perms: VMPerms) -> Result<Vec<VMRange>> {
         debug_assert!(self.type_ == TrackerType::VMATracker);
         let mut ret_vec = Vec::new();
 
@@ -297,13 +297,19 @@ impl PageTracker {
 
         // Commit EPC
         if self.is_reserved_only() {
-            vm_epc::commit_epc_for_user_space(self.range().start(), self.range().size()).unwrap();
+            vm_epc::commit_epc_for_user_space(
+                self.range().start(),
+                self.range().size(),
+                Some(perms),
+            )
+            .unwrap();
             ret_vec.push(self.range().clone());
         } else {
             debug_assert!(self.is_partially_committed());
             let uncommitted_ranges = self.get_ranges(false);
             for range in uncommitted_ranges {
-                vm_epc::commit_epc_for_user_space(range.start(), range.size()).unwrap();
+                vm_epc::commit_epc_for_user_space(range.start(), range.size(), Some(perms))
+                    .unwrap();
                 ret_vec.push(range);
             }
         }
@@ -322,7 +328,23 @@ impl PageTracker {
         debug_assert!(self.type_ == TrackerType::VMATracker);
         debug_assert!(self.range().is_superset_of(range));
 
-        vm_epc::commit_epc_for_user_space(range.start(), range.size())?;
+        vm_epc::commit_epc_for_user_space(range.start(), range.size(), None)?;
+
+        self.commit_pages_internal(range.start(), range.size());
+        self.update_pages_for_global_tracker(range.start(), range.size());
+
+        Ok(())
+    }
+
+    pub fn commit_range_for_current_vma_with_new_permission(
+        &mut self,
+        range: &VMRange,
+        new_perms: VMPerms,
+    ) -> Result<()> {
+        debug_assert!(self.type_ == TrackerType::VMATracker);
+        debug_assert!(self.range().is_superset_of(range));
+
+        vm_epc::commit_epc_for_user_space(range.start(), range.size(), Some(new_perms))?;
 
         self.commit_pages_internal(range.start(), range.size());
         self.update_pages_for_global_tracker(range.start(), range.size());

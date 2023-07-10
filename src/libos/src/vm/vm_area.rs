@@ -176,7 +176,9 @@ impl VMArea {
 
         // Commit pages if needed
         if !vm_area.is_fully_committed() && page_policy == &PagePolicy::CommitNow {
-            vm_area.pages_mut().commit_current_vma_whole()?;
+            vm_area
+                .pages_mut()
+                .commit_current_vma_whole(VMPerms::DEFAULT)?;
             vm_area.pages = None;
         }
 
@@ -260,20 +262,40 @@ impl VMArea {
         }
     }
 
-    pub fn handle_page_fault(&mut self, pf_addr: usize, kernel_triggers: bool) -> Result<()> {
+    pub fn handle_page_fault(
+        &mut self,
+        rip: usize,
+        pf_addr: usize,
+        errcd: u32,
+        kernel_triggers: bool,
+    ) -> Result<()> {
         info!("PF vma = {:?}", self);
+        if (self.perms() == VMPerms::NONE)
+            || (crate::exception::check_rw_bit(errcd) == false
+                && !self.perms().contains(VMPerms::READ))
+        {
+            return_errno!(
+                EACCES,
+                "Page is set to None permission. This is user-intended"
+            );
+        }
+
+        if crate::exception::check_rw_bit(errcd) && !self.perms().contains(VMPerms::WRITE) {
+            return_errno!(
+                EACCES, "Page is set to not contain WRITE permission but this PF is triggered by write. This is user-intended"
+            )
+        }
+
+        if rip == pf_addr && !self.perms().contains(VMPerms::EXEC) {
+            return_errno!(
+                EACCES, "Page is set to not contain EXEC permission but this PF is triggered by execution. This is user-intended"
+            )
+        }
 
         if self.is_fully_committed() {
-            if self.perms() == VMPerms::NONE {
-                return_errno!(
-                    EACCES,
-                    "Page is set to None permission. This is user-intended"
-                );
-            } else {
-                // This vma has been commited by other threads already. Just return.
-                info!("This vma has been committed by other threads already.");
-                return Ok(());
-            }
+            // This vma has been commited by other threads already. Just return.
+            info!("This vma has been committed by other threads already.");
+            return Ok(());
         }
 
         if matches!(self.epc_type, EPCMemType::Reserved) {
@@ -288,6 +310,10 @@ impl VMArea {
         let commit_size = self.commit_once_for_page_fault(pf_addr).unwrap();
 
         info!("page fault commit memory size = {:?}", commit_size);
+
+        if commit_size == 0 {
+            warn!("This PF has been handled by other threads already.");
+        }
 
         info!("page fault handle success");
 
@@ -515,16 +541,25 @@ impl VMArea {
             }
         } else {
             // PF triggered, no file-backed memory, just modify protection
-            if !self.perms().is_default() {
-                self.modify_protection_force(Some(target_range), self.perms());
-            }
+            let new_perms = self.perms();
+            // if new_perms.is_default() {
+            //     self.pages.as_mut().unwrap().commit_range_for_current_vma(target_range)?;
+            // } else {
+            self.pages
+                .as_mut()
+                .unwrap()
+                .commit_range_for_current_vma_with_new_permission(target_range, new_perms)?;
+            // }
+            // if !self.perms().is_default() {
+            //     self.modify_protection_force(Some(target_range), self.perms());
+            // }
         }
 
         Ok(())
     }
 
     fn init_file_backed_mem(
-        &mut self,
+        &self,
         target_range: &VMRange,
         file: &FileRef,
         file_offset: usize,
@@ -610,30 +645,26 @@ impl VMArea {
         let committed = false;
         let mut uncommitted_ranges = self.pages().get_ranges(committed);
 
-        for range in uncommitted_ranges.iter_mut() {
+        for range in uncommitted_ranges
+            .iter_mut()
+            .skip_while(|range| !range.contains(pf_addr))
+        {
+            // Skip until first reach the range which contains the pf_addr
             info!("uncommitted memory range = {:?}", range);
-            if total_commit_size == 0 {
-                if !range.contains(pf_addr) {
-                    // loop until finding the uncommitted range which contains pf_addr
-                    continue;
-                } else {
-                    info!("pf addr = 0x{:x}, uncommitted range = {:?}", pf_addr, range);
-                    range.set_start(align_down(pf_addr, PAGE_SIZE));
-                    range.resize(std::cmp::min(range.size(), COMMIT_ONCE_SIZE));
-                    info!("target commit range = {:?}", range);
-                }
-            } else if range.size() + total_commit_size > COMMIT_ONCE_SIZE {
-                // This is not first time commit. Try to commit until reaching the COMMIT_ONCE_SIZE
-                range.resize(COMMIT_ONCE_SIZE - total_commit_size);
-            }
-            info!("after resize, target range = {:?}", range);
+            // if total_commit_size == 0 {
+            //     info!("pf addr = 0x{:x}, uncommitted range = {:?}", pf_addr, range);
+            //     debug_assert!(range.contains(pf_addr));
+            //     range.set_start(align_down(pf_addr, PAGE_SIZE));
+            //     range.resize(std::cmp::min(range.size(), COMMIT_ONCE_SIZE));
+            //     info!("target commit range = {:?}", range);
+            // } else if range.size() + total_commit_size > COMMIT_ONCE_SIZE {
+            //     // This is not first time commit. Try to commit until reaching the COMMIT_ONCE_SIZE
+            //     range.resize(COMMIT_ONCE_SIZE - total_commit_size);
+            // }
+            // info!("after resize, target range = {:?}", range);
 
-            // Commit memory
-            self.pages
-                .as_mut()
-                .unwrap()
-                .commit_range_for_current_vma(range)?;
             self.init_committed_memory_internal(&range, None)?;
+            debug_assert!(self.init_file().is_none());
 
             total_commit_size += range.size();
             info!("total_commit_size + range size {:?}", range.size());
@@ -643,34 +674,37 @@ impl VMArea {
         }
 
         if self.pages().is_fully_committed() {
+            info!("vma is fully committed");
             self.pages = None;
-            // self.initializer = None;
         }
 
         info!("ret total_commit_size = {:?}", total_commit_size);
         Ok(total_commit_size)
     }
 
+    // Only used to handle PF triggered by the kernel
     fn commit_current_vma_whole(&mut self) -> Result<()> {
         debug_assert!(!self.is_fully_committed());
+        debug_assert!(self.init_file().is_none());
 
+        let perms = self.perms();
         // Commit EPC
-        let new_committed_ranges = self.pages_mut().commit_current_vma_whole()?;
+        let new_committed_ranges = self.pages_mut().commit_current_vma_whole(perms)?;
         // debug_assert!(commit_mem_length > 0);
 
         self.pages = None;
 
-        // Reset perms if needed
-        let need_reset_perms = !self.is_reserved_only() && self.init_file().is_some();
-        if need_reset_perms {
-            self.modify_protection_force(None, VMPerms::DEFAULT);
-        }
+        // // Reset perms if needed
+        // let need_reset_perms = !self.is_reserved_only() && self.init_file().is_some();
+        // if need_reset_perms {
+        //     self.modify_protection_force(None, VMPerms::DEFAULT);
+        // }
 
         // Init new committed memory
         // let range = self.range().clone();
-        new_committed_ranges.into_iter().for_each(|range| {
-            self.init_committed_memory_internal(&range, None).unwrap();
-        });
+        // new_committed_ranges.into_iter().for_each(|range| {
+        //     self.init_committed_memory_internal(&range, None).unwrap();
+        // });
 
         Ok(())
     }

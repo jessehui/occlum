@@ -232,14 +232,20 @@ impl Chunk {
         }
     }
 
-    pub fn handle_page_fault(&self, pf_addr: usize, kernel_triggers: bool) -> Result<()> {
+    pub fn handle_page_fault(
+        &self,
+        rip: usize,
+        pf_addr: usize,
+        errcd: u32,
+        kernel_triggers: bool,
+    ) -> Result<()> {
         let internal = &self.internal;
         match self.internal() {
             ChunkType::SingleVMA(vma) => {
                 let mut vma = vma.lock().unwrap();
                 debug_assert!(vma.contains(pf_addr));
                 info!("lock vma = {:?}", vma);
-                return vma.handle_page_fault(pf_addr, kernel_triggers);
+                return vma.handle_page_fault(rip, pf_addr, errcd, kernel_triggers);
             }
             ChunkType::MultiVMA(internal_manager) => {
                 info!("lock multivma chunk");
@@ -247,7 +253,7 @@ impl Chunk {
                     .lock()
                     .unwrap()
                     .chunk_manager
-                    .handle_page_fault(pf_addr, kernel_triggers);
+                    .handle_page_fault(rip, pf_addr, errcd, kernel_triggers);
             }
         }
     }

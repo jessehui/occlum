@@ -148,8 +148,51 @@ impl EPCAllocator for UserRegionMem {
 impl UserRegionMem {
     fn commit_memory(start_addr: usize, size: usize) -> Result<()> {
         let ptr = NonNull::<u8>::new(start_addr as *mut u8).unwrap();
+        info!("commit memory");
         unsafe { EmmAlloc.commit(ptr, size) }.map_err(|e| errno!(Errno::from(e as u32)))?;
         Ok(())
+    }
+
+    fn commit_memory_with_new_permission(
+        start_addr: usize,
+        size: usize,
+        new_perms: VMPerms,
+    ) -> Result<()> {
+        let ptr = NonNull::<u8>::new(start_addr as *mut u8).unwrap();
+        let data: Vec<u8> = Page::new_page_aligned_vec(size);
+        let perm = Perm::from_bits(new_perms.bits()).unwrap();
+        info!(
+            "commit_with_data ptr = {:?}, size = {:?}, perm = {:?}, occlum_perm = {:?}",
+            ptr, size, perm, new_perms
+        );
+        unsafe { EmmAlloc::commit_with_data(ptr, data.as_slice(), perm) }
+            .map_err(|e| errno!(Errno::from(e as u32)))?;
+        Ok(())
+    }
+}
+
+#[repr(C, align(4096))]
+#[derive(Clone)]
+struct Page([u8; PAGE_SIZE]);
+
+impl Page {
+    fn new() -> Self {
+        Self([0; PAGE_SIZE])
+    }
+
+    fn new_page_aligned_vec(size: usize) -> Vec<u8> {
+        debug_assert!(size % PAGE_SIZE == 0);
+        let page_num = size / PAGE_SIZE;
+        let mut page_vec = vec![Page::new(); page_num];
+        // let mut page_vec:Vec<Page> = Vec::with_capacity(page_num);
+
+        let ptr = page_vec.as_mut_ptr();
+        info!("page vec ptr = {:x}", ptr as usize);
+
+        let size = page_num * std::mem::size_of::<Page>();
+        std::mem::forget(page_vec);
+
+        unsafe { Vec::from_raw_parts(ptr as *mut u8, size, size) }
     }
 }
 
@@ -280,12 +323,43 @@ impl EPCMemType {
     }
 }
 
-pub fn commit_epc_for_user_space(start_addr: usize, size: usize) -> Result<()> {
+pub fn commit_epc_for_user_space(
+    start_addr: usize,
+    size: usize,
+    new_perms: Option<VMPerms>,
+) -> Result<()> {
+    if let Some(new_perms) = new_perms {
+        // To make it concurrent safe when commit epc and set new permission, we need to use EACCEPTCOPY
+        commit_epc_for_user_space_with_new_permission(start_addr, size, new_perms)
+    } else {
+        commit_epc_for_user_space_internal(start_addr, size)
+    }
+}
+
+fn commit_epc_for_user_space_internal(start_addr: usize, size: usize) -> Result<()> {
     trace!(
         "commit epc: {:?}",
         VMRange::new_with_size(start_addr, size).unwrap()
     );
     UserRegionMem::commit_memory(start_addr, size)
+}
+
+// We should make memory commit and permission change atomic to prevent data races
+// Thus, if the new perms are not the default permission (RW),
+fn commit_epc_for_user_space_with_new_permission(
+    start_addr: usize,
+    size: usize,
+    new_perms: VMPerms,
+) -> Result<()> {
+    trace!(
+        "commit epc: {:?}",
+        VMRange::new_with_size(start_addr, size).unwrap()
+    );
+    if new_perms != VMPerms::DEFAULT {
+        UserRegionMem::commit_memory_with_new_permission(start_addr, size, new_perms)
+    } else {
+        UserRegionMem::commit_memory(start_addr, size)
+    }
 }
 
 // This is a dummy function for sgx_mm_alloc. The real handler is "enclave_page_fault_handler" shown below.
@@ -298,15 +372,20 @@ extern "C" fn enclave_page_fault_handler_dummy(
 }
 
 pub fn enclave_page_fault_handler(
+    rip: usize,
     exception_info: sgx_misc_exinfo_t,
     kernel_triggers: bool,
 ) -> Result<()> {
     let pf_addr = exception_info.faulting_address as usize;
-    info!("enclave page fault caught, pf_addr = 0x{:x}", pf_addr);
+    let pf_errcd = exception_info.error_code;
+    info!(
+        "enclave page fault caught, pf_addr = 0x{:x}, error code = {:?}",
+        pf_addr, pf_errcd
+    );
 
     // TODO: Maybe we can find a better way to know whether the page fault is due to protection violation or not.
 
-    USER_SPACE_VM_MANAGER.handle_page_fault(pf_addr, kernel_triggers)?;
+    USER_SPACE_VM_MANAGER.handle_page_fault(rip, pf_addr, pf_errcd, kernel_triggers)?;
 
     Ok(())
 }

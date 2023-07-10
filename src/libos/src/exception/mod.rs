@@ -33,24 +33,33 @@ extern "C" fn handle_exception(info: *mut sgx_exception_info_t) -> i32 {
         let info = unsafe { &mut *info };
         // If it is #PF, but the triggered code is not user's code and the #PF address is in the userspace, then
         // it is a kernel-triggered #PF that we can handle.
-        if info.exception_vector == sgx_exception_vector_t::SGX_EXCEPTION_VECTOR_PF
-            && !USER_SPACE_VM_MANAGER
-                .range()
-                .contains(info.cpu_context.rip as usize)
+        if !USER_SPACE_VM_MANAGER
+            .range()
+            .contains(info.cpu_context.rip as usize)
         {
-            // The PF address must be in the user space
-            let pf_addr = info.exinfo.faulting_address as usize;
-            if !USER_SPACE_VM_MANAGER.range().contains(pf_addr) {
+            if info.exception_vector == sgx_exception_vector_t::SGX_EXCEPTION_VECTOR_PF {
+                // The PF address must be in the user space
+                let pf_addr = info.exinfo.faulting_address as usize;
+                if !USER_SPACE_VM_MANAGER.range().contains(pf_addr) {
+                    fpregs.restore();
+                    return SGX_MM_EXCEPTION_CONTINUE_SEARCH;
+                } else {
+                    // kernel code triggers #PF. This can happen e.g. when read syscall triggers user buffer #PF.
+                    info!("kernel code triggers #PF");
+                    let kernel_triggers = true;
+                    enclave_page_fault_handler(
+                        info.cpu_context.rip as usize,
+                        info.exinfo,
+                        kernel_triggers,
+                    )
+                    .expect("handle PF failure");
+                    fpregs.restore();
+                    return SGX_MM_EXCEPTION_CONTINUE_EXECUTION;
+                }
+            } else {
+                println!("exception vector = {:?}", info.exception_vector);
                 fpregs.restore();
                 return SGX_MM_EXCEPTION_CONTINUE_SEARCH;
-            } else {
-                // kernel code triggers #PF. This can happen e.g. when read syscall triggers user buffer #PF.
-                info!("kernel code triggers #PF");
-                let kernel_triggers = true;
-                enclave_page_fault_handler(info.exinfo, kernel_triggers)
-                    .expect("handle PF failure");
-                fpregs.restore();
-                return SGX_MM_EXCEPTION_CONTINUE_EXECUTION;
             }
         }
     }
@@ -81,7 +90,7 @@ pub fn do_handle_exception(
     // Try to do instruction emulation first
     if info.exception_vector == sgx_exception_vector_t::SGX_EXCEPTION_VECTOR_UD {
         // Assume the length of opcode is 2 bytes
-        let ip_opcode = unsafe { *(user_context.rip as *const u16) };
+        let ip_opcode: u16 = unsafe { *(user_context.rip as *const u16) };
         if ip_opcode == RDTSC_OPCODE {
             return handle_rdtsc_exception(user_context);
         } else if ip_opcode == SYSCALL_OPCODE {
@@ -91,10 +100,13 @@ pub fn do_handle_exception(
         }
     }
 
-    if info.exception_vector == sgx_exception_vector_t::SGX_EXCEPTION_VECTOR_PF {
+    // We should only handled PF exception with SGX bit set which is due to uncommitted EPC
+    if info.exception_vector == sgx_exception_vector_t::SGX_EXCEPTION_VECTOR_PF
+        && check_sgx_bit(info.exinfo.error_code)
+    {
         info!("Userspace #PF caught, try handle");
 
-        if enclave_page_fault_handler(info.exinfo, false).is_ok() {
+        if enclave_page_fault_handler(info.cpu_context.rip as usize, info.exinfo, false).is_ok() {
             info!("#PF handling is done successfully");
             return Ok(0);
         }
@@ -148,4 +160,22 @@ fn check_exception_type(type_: sgx_exception_type_t) -> Result<()> {
         return_errno!(EINVAL, "Can only handle hardware / simulated exceptions");
     }
     Ok(())
+}
+
+// Based on Page-Fault Error Code of Intel Mannul
+const PF_EXCEPTION_SGX_BIT: u32 = 0x1;
+const PF_EXCEPTION_RW_BIT: u32 = 0x2;
+
+// Return value:
+// True     - SGX bit is set
+// False    - SGX bit is not set
+pub fn check_sgx_bit(exception_error_code: u32) -> bool {
+    exception_error_code & PF_EXCEPTION_SGX_BIT == PF_EXCEPTION_SGX_BIT
+}
+
+// Return value:
+// True     - write bit is set, #PF caused by write
+// False    - read bit is set, #PF caused by read
+pub fn check_rw_bit(exception_error_code: u32) -> bool {
+    exception_error_code & PF_EXCEPTION_RW_BIT == PF_EXCEPTION_RW_BIT
 }

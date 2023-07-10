@@ -416,7 +416,13 @@ impl ChunkManager {
         return Ok(vma.range().clone());
     }
 
-    pub fn handle_page_fault(&mut self, pf_addr: usize, kernel_triggers: bool) -> Result<()> {
+    pub fn handle_page_fault(
+        &mut self,
+        rip: usize,
+        pf_addr: usize,
+        errcd: u32,
+        kernel_triggers: bool,
+    ) -> Result<()> {
         info!(
             "chunk manager range = {:?}, free_size = {:?}",
             self.range, self.free_size
@@ -431,7 +437,7 @@ impl ChunkManager {
         }
 
         let mut vma = vma.clone();
-        vma.handle_page_fault(pf_addr, kernel_triggers)?;
+        vma.handle_page_fault(rip, pf_addr, errcd, kernel_triggers)?;
         vma_cursor.replace_with(VMAObj::new_vma_obj(vma));
 
         Ok(())
