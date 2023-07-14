@@ -547,7 +547,7 @@ impl ProcessVM {
                 PagePolicy::CommitNow
             // } else if perms != VMPerms::DEFAULT && perms != VMPerms::NONE {
             //     PagePolicy::CommitNow
-            } else if perms == VMPerms::ALL {
+            } else if perms != VMPerms::DEFAULT {
                 PagePolicy::CommitNow
             } else {
                 PagePolicy::CommitOnDemand
