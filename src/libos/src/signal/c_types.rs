@@ -208,6 +208,7 @@ pub struct ucontext_t {
     pub uc_mcontext: mcontext_t,
     pub uc_sigmask: sigset_t,
     pub fpregs: [u8; 64 * 8], //fxsave structure
+    pub xsave_area: [u8; 4096],
 }
 
 #[derive(Debug, Clone, Copy)]

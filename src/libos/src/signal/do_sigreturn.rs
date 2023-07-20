@@ -119,7 +119,7 @@ fn do_deliver_signal(thread: &ThreadRef, process: &ProcessRef, cpu_context: &mut
 pub fn force_signal(signal: Box<dyn Signal>, cpu_context: &mut CpuContext) {
     let thread = current!();
     let process = thread.process();
-
+    debug_assert!(cpu_context.xsave_area != std::ptr::null());
     handle_signal(signal, &thread, &process, cpu_context);
 
     // Temporarily block all signals from being delivered until this syscall is
@@ -277,6 +277,8 @@ fn handle_signals_by_user(
             let fpregs = FpRegs::save();
             ucontext.fpregs.copy_from_slice(fpregs.as_slice());
         }
+
+        if curr_user_ctxt.xsave_area
 
         ucontext as *mut ucontext_t
     };
