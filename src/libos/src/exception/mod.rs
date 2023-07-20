@@ -111,7 +111,7 @@ pub fn do_handle_exception(
 
     // We should only handled PF exception with SGX bit set which is due to uncommitted EPC
     if info.exception_vector == sgx_exception_vector_t::SGX_EXCEPTION_VECTOR_PF
-        && check_sgx_bit(info.exinfo.error_code)
+    // && check_sgx_bit(info.exinfo.error_code)
     {
         info!("Userspace #PF caught, try handle");
 

@@ -357,6 +357,7 @@ fn commit_epc_for_user_space_with_new_permission(
     );
     if new_perms != VMPerms::DEFAULT {
         UserRegionMem::commit_memory_with_new_permission(start_addr, size, new_perms)
+        // UserRegionMem::commit_memory(start_addr, size)
     } else {
         UserRegionMem::commit_memory(start_addr, size)
     }

@@ -306,6 +306,10 @@ impl VMArea {
             return self.commit_current_vma_whole();
         }
 
+        if self.perms() == VMPerms::ALL {
+            Self::debug_point();
+        }
+
         // The return commit_size can be 0 when other threads already commit the PF-containing range but the vma is not fully committed yet.
         let commit_size = self.commit_once_for_page_fault(pf_addr).unwrap();
 
@@ -327,6 +331,8 @@ impl VMArea {
             None
         }
     }
+
+    pub fn debug_point() {}
 
     pub fn writeback_file(&self) -> Option<(&FileRef, usize)> {
         if let Some(file) = &self.file_backed {

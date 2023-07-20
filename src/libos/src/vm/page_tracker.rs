@@ -344,10 +344,10 @@ impl PageTracker {
         debug_assert!(self.type_ == TrackerType::VMATracker);
         debug_assert!(self.range().is_superset_of(range));
 
-        vm_epc::commit_epc_for_user_space(range.start(), range.size(), Some(new_perms))?;
-
         self.commit_pages_internal(range.start(), range.size());
         self.update_pages_for_global_tracker(range.start(), range.size());
+
+        vm_epc::commit_epc_for_user_space(range.start(), range.size(), Some(new_perms))?;
 
         Ok(())
     }
