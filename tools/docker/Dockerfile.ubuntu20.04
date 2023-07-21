@@ -125,7 +125,7 @@ RUN apt-get update && aptitude install -y \
 
 # Install SGX SDK
 WORKDIR /tmp
-RUN git clone -b sgx_2.19_for_occlum_edmm_support https://github.com/jessehui/linux-sgx && \
+RUN git clone -b sgx_2.19_for_occlum_edmm_support_xsave https://github.com/jessehui/linux-sgx && \
     mkdir /etc/init && \
     cd linux-sgx && \
     make preparation && \
@@ -136,7 +136,7 @@ RUN git clone -b sgx_2.19_for_occlum_edmm_support https://github.com/jessehui/li
 # Download the Occlum source
 ARG OCCLUM_BRANCH
 WORKDIR /root
-RUN git clone -b legacy_edmm_support https://github.com/jessehui/occlum && \
+RUN git clone -b legacy_edmm_debug_concurrent https://github.com/jessehui/occlum && \
     cp -r /root/occlum/tools/toolchains/* /tmp/ && mkdir -p /opt/occlum/ && \
     cp /root/occlum/tools/docker/start_aesm.sh /opt/occlum/
 

@@ -121,4 +121,4 @@ jobs:
           platforms: linux/amd64
           build-args: OCCLUM_BRANCH=${{ env.OCCLUM_BRANCH }}
           push: true
-          tags: jessehui/occlum:legacy-occlum-ubuntu20.04-edmm-experiment-2.19
+          tags: jessehui/occlum:occlum-ubuntu20.04-edmm-experiment-v3
