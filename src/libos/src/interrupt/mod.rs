@@ -22,6 +22,7 @@ extern "C" fn handle_interrupt(info: *mut sgx_interrupt_info_t) -> i32 {
             SyscallNum::HandleInterrupt as u32,
             info as *mut _,
             &mut fpregs as *mut FpRegs,
+            std::ptr::null::<u8>() as *mut u8,
         )
     };
     unreachable!();

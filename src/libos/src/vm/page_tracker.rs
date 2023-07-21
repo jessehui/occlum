@@ -40,7 +40,7 @@ const TB: usize = 1 << 40;
 const MB: usize = 1 << 20;
 const KB: usize = 1 << 10;
 
-const PAGE_CHUNK_UNIT: usize = 8 * PAGE_SIZE;
+const PAGE_CHUNK_UNIT: usize = 16 * MB;
 const PAGE_CHUNK_PAGE_NUM: usize = PAGE_CHUNK_UNIT / PAGE_SIZE;
 
 pub struct PageChunkManager {

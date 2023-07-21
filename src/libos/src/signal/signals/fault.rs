@@ -1,6 +1,7 @@
 use super::super::c_types::*;
 use super::super::constants::*;
 use super::super::{SigNum, Signal};
+use crate::exception::new_sgx_exception_info_t;
 use crate::prelude::*;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -11,7 +12,7 @@ pub struct FaultSignal {
 }
 
 impl FaultSignal {
-    pub fn new(info: &sgx_exception_info_t) -> Self {
+    pub fn new(info: &new_sgx_exception_info_t) -> Self {
         // TODO: the current mapping from exceptinon to signal is only a first
         // order approximation. The resulting signum or siginfo may not be
         // idential to Linux's behavior.

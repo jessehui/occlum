@@ -13,9 +13,7 @@ use intrusive_collections::rbtree::{Link, RBTree};
 use intrusive_collections::{intrusive_adapter, KeyAdapter};
 
 // Commit memory size when the PF occurs.
-// const COMMIT_ONCE_SIZE: usize = 256 * PAGE_SIZE;
-
-const COMMIT_ONCE_SIZE: usize = 4 * PAGE_SIZE;
+const COMMIT_ONCE_SIZE: usize = 16 * PAGE_SIZE;
 #[derive(Clone, Debug)]
 pub struct VMArea {
     range: VMRange,
@@ -651,17 +649,17 @@ impl VMArea {
         {
             // Skip until first reach the range which contains the pf_addr
             info!("uncommitted memory range = {:?}", range);
-            // if total_commit_size == 0 {
-            //     info!("pf addr = 0x{:x}, uncommitted range = {:?}", pf_addr, range);
-            //     debug_assert!(range.contains(pf_addr));
-            //     range.set_start(align_down(pf_addr, PAGE_SIZE));
-            //     range.resize(std::cmp::min(range.size(), COMMIT_ONCE_SIZE));
-            //     info!("target commit range = {:?}", range);
-            // } else if range.size() + total_commit_size > COMMIT_ONCE_SIZE {
-            //     // This is not first time commit. Try to commit until reaching the COMMIT_ONCE_SIZE
-            //     range.resize(COMMIT_ONCE_SIZE - total_commit_size);
-            // }
-            // info!("after resize, target range = {:?}", range);
+            if total_commit_size == 0 {
+                info!("pf addr = 0x{:x}, uncommitted range = {:?}", pf_addr, range);
+                debug_assert!(range.contains(pf_addr));
+                range.set_start(align_down(pf_addr, PAGE_SIZE));
+                range.resize(std::cmp::min(range.size(), COMMIT_ONCE_SIZE));
+                info!("target commit range = {:?}", range);
+            } else if range.size() + total_commit_size > COMMIT_ONCE_SIZE {
+                // This is not first time commit. Try to commit until reaching the COMMIT_ONCE_SIZE
+                range.resize(COMMIT_ONCE_SIZE - total_commit_size);
+            }
+            info!("after resize, target range = {:?}", range);
 
             self.init_committed_memory_internal(&range, None)?;
             debug_assert!(self.init_file().is_none());

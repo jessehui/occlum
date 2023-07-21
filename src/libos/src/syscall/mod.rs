@@ -7,6 +7,7 @@
 //! 3. Preprocess the system call and then call `dispatch_syscall` (in this file)
 //! 4. Call `do_*` to process the system call (in other modules)
 
+use crate::exception::new_sgx_exception_info_t;
 use aligned::{Aligned, A16};
 use core::arch::x86_64::{_fxrstor, _fxsave};
 use std::any::Any;
@@ -424,7 +425,7 @@ macro_rules! process_syscall_table_with_callback {
             // Occlum-specific system calls
             (SpawnGlibc = 359) => do_spawn_for_glibc(child_pid_ptr: *mut u32, path: *const i8, argv: *const *const i8, envp: *const *const i8, fa: *const SpawnFileActions, attribute_list: *const posix_spawnattr_t),
             (SpawnMusl = 360) => do_spawn_for_musl(child_pid_ptr: *mut u32, path: *const i8, argv: *const *const i8, envp: *const *const i8, fdop_list: *const FdOp, attribute_list: *const posix_spawnattr_t),
-            (HandleException = 361) => do_handle_exception(info: *mut sgx_exception_info_t, fpregs: *mut FpRegs, context: *mut CpuContext),
+            (HandleException = 361) => do_handle_exception(info: *mut new_sgx_exception_info_t, fpregs: *mut FpRegs, xsave_area: *mut u8, context: *mut CpuContext),
             (HandleInterrupt = 362) => do_handle_interrupt(info: *mut sgx_interrupt_info_t, fpregs: *mut FpRegs, context: *mut CpuContext),
             (MountRootFS = 363) => do_mount_rootfs(key_ptr: *const sgx_key_128bit_t, rootfs_config_ptr: *const user_rootfs_config),
         }
@@ -650,7 +651,8 @@ fn do_syscall(user_context: &mut CpuContext) {
         } else if syscall_num == SyscallNum::HandleException {
             // syscall.args[0] == info
             // syscall.args[1] == fpregs
-            syscall.args[2] = user_context as *mut _ as isize;
+            // syscall.args[2] == xsave_area
+            syscall.args[3] = user_context as *mut _ as isize;
         } else if syscall.num == SyscallNum::HandleInterrupt {
             // syscall.args[0] == info
             // syscall.args[1] == fpregs
@@ -762,6 +764,16 @@ fn do_sysret(user_context: &mut CpuContext) -> ! {
                 unsafe { fpregs.as_ref().unwrap().restore() };
             }
         }
+
+        let xsave_area = user_context.xsave_area;
+        if xsave_area != ptr::null_mut() {
+            unsafe {
+                // _xrstor64(fpregs, XSAVE_MASK);
+                info!("restore xsave_area");
+                restore_xregs(xsave_area);
+            }
+            user_context.xsave_area = ptr::null_mut();
+        }
         unsafe { __occlum_sysret(user_context) } // jump to user space
     } else {
         if user_context.fpregs != ptr::null_mut() && user_context.fpregs_on_heap == 1 {
@@ -770,6 +782,12 @@ fn do_sysret(user_context: &mut CpuContext) -> ! {
         unsafe { do_exit_task() } // exit enclave
     }
     unreachable!("__occlum_sysret never returns!");
+}
+
+extern "C" {
+    pub fn save_xregs(save_area: *mut u8);
+    pub fn restore_xregs(save_area: *const u8);
+    // fn rsgx_get_thread_data() -> *const thread_data_t;
 }
 
 /*
@@ -1044,6 +1062,7 @@ pub struct CpuContext {
     pub rflags: u64,
     pub fpregs_on_heap: u64,
     pub fpregs: *mut FpRegs,
+    pub xsave_area: *mut u8,
 }
 
 impl CpuContext {
@@ -1069,6 +1088,7 @@ impl CpuContext {
             rflags: src.rflags,
             fpregs_on_heap: 0,
             fpregs: ptr::null_mut(),
+            xsave_area: ptr::null_mut(),
         }
     }
 }
@@ -1086,10 +1106,16 @@ pub unsafe fn exception_interrupt_syscall_c_abi(
     num: u32,
     info: *mut c_void,
     fpregs: *mut FpRegs,
+    xsave_area: *mut u8,
 ) -> u32 {
     #[allow(improper_ctypes)]
     extern "C" {
-        pub fn __occlum_syscall_c_abi(num: u32, info: *mut c_void, fpregs: *mut FpRegs) -> u32;
+        pub fn __occlum_syscall_c_abi(
+            num: u32,
+            info: *mut c_void,
+            fpregs: *mut FpRegs,
+            xsave_area: *mut u8,
+        ) -> u32;
     }
-    __occlum_syscall_c_abi(num, info, fpregs)
+    __occlum_syscall_c_abi(num, info, fpregs, xsave_area)
 }

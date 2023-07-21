@@ -545,13 +545,8 @@ impl ProcessVM {
                 // Commit Now for file-backed mmap
                 // TODO: Use Commit on demand policy in the future
                 PagePolicy::CommitNow
-            // } else if perms != VMPerms::DEFAULT && perms != VMPerms::NONE {
-            //     PagePolicy::CommitNow
-            } else if perms != VMPerms::DEFAULT {
-                PagePolicy::CommitNow
             } else {
                 PagePolicy::CommitOnDemand
-                // PagePolicy::CommitNow
             }
         };
         let mmap_options = VMMapOptionsBuilder::default()

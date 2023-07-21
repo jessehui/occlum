@@ -11,11 +11,37 @@ use crate::vm::{enclave_page_fault_handler, USER_SPACE_VM_MANAGER};
 use aligned::{Aligned, A16};
 use core::arch::x86_64::_fxsave;
 use sgx_types::*;
+use sgx_types::{
+    sgx_cpu_context_t, sgx_exception_type_t, sgx_exception_vector_t, sgx_misc_exinfo_t,
+};
 
 // Modules for instruction simulation
 mod cpuid;
 mod rdtsc;
 mod syscall;
+
+extern "C" {
+    pub fn sgx_register_exception_handler(
+        is_first_handler: uint32_t,
+        exception_handler: new_sgx_exception_handler_t,
+    ) -> *const c_void;
+}
+
+#[allow(non_camel_case_types)]
+#[repr(C)]
+pub struct new_sgx_exception_info_t {
+    pub cpu_context: sgx_cpu_context_t,
+    pub exception_vector: sgx_exception_vector_t,
+    pub exception_type: sgx_exception_type_t,
+    pub exinfo: sgx_misc_exinfo_t,
+    xsave_size: u64,
+    reserved: [u64; 2],
+    xsave_area: [u8; 0],
+}
+
+#[allow(non_camel_case_types)]
+pub type new_sgx_exception_handler_t =
+    extern "C" fn(info: *mut new_sgx_exception_info_t) -> int32_t;
 
 pub fn register_exception_handlers() {
     setup_cpuid_info();
@@ -27,7 +53,8 @@ pub fn register_exception_handlers() {
 }
 
 #[no_mangle]
-extern "C" fn handle_exception(info: *mut sgx_exception_info_t) -> i32 {
+extern "C" fn handle_exception(info: *mut new_sgx_exception_info_t) -> i32 {
+    let mut xsave_area = unsafe { &mut *info }.xsave_area.as_mut_ptr();
     let mut fpregs: FpRegs = FpRegs::save();
     {
         let info = unsafe { &mut *info };
@@ -41,10 +68,11 @@ extern "C" fn handle_exception(info: *mut sgx_exception_info_t) -> i32 {
                 // The PF address must be in the user space
                 let pf_addr = info.exinfo.faulting_address as usize;
                 if !USER_SPACE_VM_MANAGER.range().contains(pf_addr) {
-                    fpregs.restore();
                     return SGX_MM_EXCEPTION_CONTINUE_SEARCH;
                 } else {
                     // kernel code triggers #PF. This can happen e.g. when read syscall triggers user buffer #PF.
+                    // FIXME: Don't use the exception stack as it is small and can cause
+                    // stack overrun potentially. Try to switch to the kernel stack.
                     info!("kernel code triggers #PF");
                     let kernel_triggers = true;
                     enclave_page_fault_handler(
@@ -53,12 +81,10 @@ extern "C" fn handle_exception(info: *mut sgx_exception_info_t) -> i32 {
                         kernel_triggers,
                     )
                     .expect("handle PF failure");
-                    fpregs.restore();
                     return SGX_MM_EXCEPTION_CONTINUE_EXECUTION;
                 }
             } else {
                 println!("exception vector = {:?}", info.exception_vector);
-                fpregs.restore();
                 return SGX_MM_EXCEPTION_CONTINUE_SEARCH;
             }
         }
@@ -69,6 +95,7 @@ extern "C" fn handle_exception(info: *mut sgx_exception_info_t) -> i32 {
             SyscallNum::HandleException as u32,
             info as *mut _,
             &mut fpregs as *mut FpRegs,
+            xsave_area,
         )
     };
     unreachable!();
@@ -76,16 +103,19 @@ extern "C" fn handle_exception(info: *mut sgx_exception_info_t) -> i32 {
 
 /// Exceptions are handled as a special kind of system calls.
 pub fn do_handle_exception(
-    info: *mut sgx_exception_info_t,
+    info: *mut new_sgx_exception_info_t,
     fpregs: *mut FpRegs,
+    xsave_area: *mut u8,
     user_context: *mut CpuContext,
 ) -> Result<isize> {
     let info = unsafe { &mut *info };
     check_exception_type(info.exception_type)?;
+    info!("do handle exception vector = {:?}", info.exception_vector);
 
     let user_context = unsafe { &mut *user_context };
     *user_context = CpuContext::from_sgx(&info.cpu_context);
     user_context.fpregs = fpregs;
+    user_context.xsave_area = xsave_area;
 
     // Try to do instruction emulation first
     if info.exception_vector == sgx_exception_vector_t::SGX_EXCEPTION_VECTOR_UD {
@@ -100,10 +130,11 @@ pub fn do_handle_exception(
         }
     }
 
-    // We should only handled PF exception with SGX bit set which is due to uncommitted EPC
-    if info.exception_vector == sgx_exception_vector_t::SGX_EXCEPTION_VECTOR_PF
-        && check_sgx_bit(info.exinfo.error_code)
-    {
+    // Normally, We should only handled PF exception with SGX bit set which is due to uncommitted EPC.
+    // However, it happens that when committing a no-read-write page (e.g. RWX), there is a short gap
+    // after EACCEPTCOPY and before the mprotect ocall. And if the user touches memory during this short
+    // gap, the SGX bit will not be set. Thus, here we don't check the SGX bit.
+    if info.exception_vector == sgx_exception_vector_t::SGX_EXCEPTION_VECTOR_PF {
         info!("Userspace #PF caught, try handle");
 
         if enclave_page_fault_handler(info.cpu_context.rip as usize, info.exinfo, false).is_ok() {
