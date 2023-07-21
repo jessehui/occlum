@@ -506,13 +506,20 @@ impl VMManager {
         errcd: u32,
         kernel_triggers: bool,
     ) -> Result<()> {
-        let current = current!();
-        let current_process_mem_chunks = current.vm().mem_chunks().read().unwrap();
+        let page_fault_chunk = {
+            let current = current!();
+            let current_process_mem_chunks = current.vm().mem_chunks().read().unwrap();
+            if let Some(page_fault_chunk) = current_process_mem_chunks
+                .iter()
+                .find(|chunk| chunk.range().contains(pf_addr))
+            {
+                Some(page_fault_chunk.clone())
+            } else {
+                None
+            }
+        };
 
-        if let Some(page_fault_chunk) = current_process_mem_chunks
-            .iter()
-            .find(|chunk| chunk.range().contains(pf_addr))
-        {
+        if let Some(page_fault_chunk) = page_fault_chunk {
             page_fault_chunk.handle_page_fault(rip, pf_addr, errcd, kernel_triggers)
         } else {
             // This can happen for example, when the user intends to trigger the SIGSEGV handler by visit nullptr.
