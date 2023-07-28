@@ -1,5 +1,6 @@
 // This file contains EPC related APIs and definitions.
 
+use super::vm_area::COMMIT_ONCE_SIZE;
 use super::*;
 use modular_bitfield::{
     bitfield,
@@ -33,6 +34,35 @@ pub enum EPCMemType {
 
 pub struct ReservedMem;
 pub struct UserRegionMem;
+
+#[repr(C, align(4096))]
+#[derive(Clone)]
+struct Page([u8; PAGE_SIZE]);
+
+impl Page {
+    fn new() -> Self {
+        Self([0; PAGE_SIZE])
+    }
+
+    fn new_page_aligned_vec(size: usize) -> Vec<u8> {
+        debug_assert!(size % PAGE_SIZE == 0);
+        let page_num = size / PAGE_SIZE;
+        let mut page_vec = vec![Page::new(); page_num];
+        // let mut page_vec:Vec<Page> = Vec::with_capacity(page_num);
+
+        let ptr = page_vec.as_mut_ptr();
+        info!("page vec ptr = {:x}", ptr as usize);
+
+        let size = page_num * std::mem::size_of::<Page>();
+        std::mem::forget(page_vec);
+
+        unsafe { Vec::from_raw_parts(ptr as *mut u8, size, size) }
+    }
+}
+
+lazy_static! {
+    static ref ZERO_PAGES: Vec<u8> = Page::new_page_aligned_vec(COMMIT_ONCE_SIZE);
+}
 
 pub trait EPCAllocator {
     fn alloc(size: usize) -> Result<usize> {
@@ -159,40 +189,16 @@ impl UserRegionMem {
         new_perms: VMPerms,
     ) -> Result<()> {
         let ptr = NonNull::<u8>::new(start_addr as *mut u8).unwrap();
-        let data: Vec<u8> = Page::new_page_aligned_vec(size);
+        debug_assert!(size <= COMMIT_ONCE_SIZE);
+        let data = &ZERO_PAGES[..size];
         let perm = Perm::from_bits(new_perms.bits()).unwrap();
         info!(
             "commit_with_data ptr = {:?}, size = {:?}, perm = {:?}, occlum_perm = {:?}",
             ptr, size, perm, new_perms
         );
-        unsafe { EmmAlloc::commit_with_data(ptr, data.as_slice(), perm) }
+        unsafe { EmmAlloc::commit_with_data(ptr, data, perm) }
             .map_err(|e| errno!(Errno::from(e as u32)))?;
         Ok(())
-    }
-}
-
-#[repr(C, align(4096))]
-#[derive(Clone)]
-struct Page([u8; PAGE_SIZE]);
-
-impl Page {
-    fn new() -> Self {
-        Self([0; PAGE_SIZE])
-    }
-
-    fn new_page_aligned_vec(size: usize) -> Vec<u8> {
-        debug_assert!(size % PAGE_SIZE == 0);
-        let page_num = size / PAGE_SIZE;
-        let mut page_vec = vec![Page::new(); page_num];
-        // let mut page_vec:Vec<Page> = Vec::with_capacity(page_num);
-
-        let ptr = page_vec.as_mut_ptr();
-        info!("page vec ptr = {:x}", ptr as usize);
-
-        let size = page_num * std::mem::size_of::<Page>();
-        std::mem::forget(page_vec);
-
-        unsafe { Vec::from_raw_parts(ptr as *mut u8, size, size) }
     }
 }
 

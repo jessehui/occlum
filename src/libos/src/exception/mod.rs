@@ -15,6 +15,17 @@ use sgx_types::{
     sgx_cpu_context_t, sgx_exception_type_t, sgx_exception_vector_t, sgx_misc_exinfo_t,
 };
 
+use std::collections::HashSet;
+use std::sync::SgxMutex;
+
+const ENCLU: u32 = 0xd7010f;
+const EACCEPT: u32 = 0x5;
+const EACCEPTCOPY: u32 = 0x7;
+
+// lazy_static! {
+//     static ref HANDLE_PF_TRACKER: SgxMutex<HashSet<u32>> = SgxMutex::new(HashSet::new());
+// }
+
 // Modules for instruction simulation
 mod cpuid;
 mod rdtsc;
@@ -70,6 +81,21 @@ extern "C" fn handle_exception(info: *mut new_sgx_exception_info_t) -> i32 {
                 if !USER_SPACE_VM_MANAGER.range().contains(pf_addr) {
                     return SGX_MM_EXCEPTION_CONTINUE_SEARCH;
                 } else {
+                    let rip = info.cpu_context.rip as *const u32;
+                    let rax = info.cpu_context.rax as u32;
+                    // This can happen when two threads both try to EAUG a new page. Thread 1 EAUG because it first
+                    // touches the memory and triggers #PF. Thread 2 EAUG because it uses sgx_mm_commit to commit a
+                    // new page with EACCEPT and triggers #PF. If Thread 1 first acquires the lock to do EAUG, Thread 2 will
+                    // raise a signal because it can't do EAUG again. This signal will eventually be handled here. And the
+                    // instruction that triggers this exception is EACCEPT.
+                    // In this case, since the new page is EAUG-ed already, just need to excecute the EACCEPT again. Thus here
+                    // just return SGX_MM_EXCEPTION_CONTINUE_EXECUTION.
+                    if ENCLU == (unsafe { *rip } as u32) & 0xffffff
+                        && (EACCEPT == rax || EACCEPTCOPY == rax)
+                    {
+                        return SGX_MM_EXCEPTION_CONTINUE_EXECUTION;
+                    }
+
                     // kernel code triggers #PF. This can happen e.g. when read syscall triggers user buffer #PF.
                     // FIXME: Don't use the exception stack as it is small and can cause
                     // stack overrun potentially. Try to switch to the kernel stack.
@@ -136,12 +162,16 @@ pub fn do_handle_exception(
     // gap, the SGX bit will not be set. Thus, here we don't check the SGX bit.
     if info.exception_vector == sgx_exception_vector_t::SGX_EXCEPTION_VECTOR_PF {
         info!("Userspace #PF caught, try handle");
-
+        // let current_tid = current!().tid();
+        // let ret = { HANDLE_PF_TRACKER.lock().unwrap().insert(current_tid) };
+        // assert!(ret == true);
         if enclave_page_fault_handler(info.cpu_context.rip as usize, info.exinfo, false).is_ok() {
             info!("#PF handling is done successfully");
+            // HANDLE_PF_TRACKER.lock().unwrap().remove(&current_tid);
             return Ok(0);
         }
 
+        // HANDLE_PF_TRACKER.lock().unwrap().remove(&current_tid);
         warn!(
             "#PF not handled. Turn to signal. user context = {:?}",
             user_context

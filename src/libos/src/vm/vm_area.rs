@@ -13,7 +13,8 @@ use intrusive_collections::rbtree::{Link, RBTree};
 use intrusive_collections::{intrusive_adapter, KeyAdapter};
 
 // Commit memory size when the PF occurs.
-const COMMIT_ONCE_SIZE: usize = 16 * PAGE_SIZE;
+pub const COMMIT_ONCE_SIZE: usize = 16 * PAGE_SIZE;
+
 #[derive(Clone, Debug)]
 pub struct VMArea {
     range: VMRange,
