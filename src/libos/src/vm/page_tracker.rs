@@ -1,6 +1,7 @@
 use super::*;
 
 use super::user_space_vm::USER_SPACE_VM_MANAGER;
+use super::vm_util::{GB, KB, MB};
 use bitvec::vec::BitVec;
 use util::sync::RwLock;
 use vm_epc::EPCMemType;
@@ -35,12 +36,7 @@ lazy_static! {
         RwLock::new(PageChunkManager::new(USER_SPACE_VM_MANAGER.range()));
 }
 
-const GB: usize = 1 << 30;
-const TB: usize = 1 << 40;
-const MB: usize = 1 << 20;
-const KB: usize = 1 << 10;
-
-const PAGE_CHUNK_UNIT: usize = 16 * MB;
+const PAGE_CHUNK_UNIT: usize = 256 * MB;
 const PAGE_CHUNK_PAGE_NUM: usize = PAGE_CHUNK_UNIT / PAGE_SIZE;
 
 pub struct PageChunkManager {

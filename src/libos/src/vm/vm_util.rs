@@ -10,6 +10,11 @@ use intrusive_collections::Bound;
 use intrusive_collections::RBTreeLink;
 use intrusive_collections::{intrusive_adapter, KeyAdapter};
 
+pub const GB: usize = 1 << 30;
+pub const TB: usize = 1 << 40;
+pub const MB: usize = 1 << 20;
+pub const KB: usize = 1 << 10;
+
 #[derive(Clone, Debug)]
 pub enum VMInitializer {
     DoNothing(),

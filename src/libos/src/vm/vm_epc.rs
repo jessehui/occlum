@@ -1,6 +1,6 @@
 // This file contains EPC related APIs and definitions.
 
-use super::vm_area::COMMIT_ONCE_SIZE;
+// use super::vm_area::COMMIT_ONCE_SIZE;
 use super::*;
 use modular_bitfield::{
     bitfield,
@@ -61,7 +61,7 @@ impl Page {
 }
 
 lazy_static! {
-    static ref ZERO_PAGES: Vec<u8> = Page::new_page_aligned_vec(COMMIT_ONCE_SIZE);
+    static ref ZERO_PAGES: Vec<u8> = Page::new_page_aligned_vec(0);
 }
 
 pub trait EPCAllocator {
@@ -189,7 +189,7 @@ impl UserRegionMem {
         new_perms: VMPerms,
     ) -> Result<()> {
         let ptr = NonNull::<u8>::new(start_addr as *mut u8).unwrap();
-        debug_assert!(size <= COMMIT_ONCE_SIZE);
+        // debug_assert!(size <= COMMIT_ONCE_SIZE);
         let data = &ZERO_PAGES[..size];
         let perm = Perm::from_bits(new_perms.bits()).unwrap();
         info!(
@@ -334,12 +334,18 @@ pub fn commit_epc_for_user_space(
     size: usize,
     new_perms: Option<VMPerms>,
 ) -> Result<()> {
-    if let Some(new_perms) = new_perms {
-        // To make it concurrent safe when commit epc and set new permission, we need to use EACCEPTCOPY
-        commit_epc_for_user_space_with_new_permission(start_addr, size, new_perms)
-    } else {
-        commit_epc_for_user_space_internal(start_addr, size)
+    // if let Some(new_perms) = new_perms {
+    //     // To make it concurrent safe when commit epc and set new permission, we need to use EACCEPTCOPY
+    //     commit_epc_for_user_space_with_new_permission(start_addr, size, new_perms)
+    // } else {
+    //     commit_epc_for_user_space_internal(start_addr, size)
+    // }
+
+    commit_epc_for_user_space_internal(start_addr, size)?;
+    if new_perms.is_some() && new_perms.unwrap() != VMPerms::DEFAULT {
+        UserRegionMem::modify_protection(start_addr, size, new_perms.unwrap())?;
     }
+    Ok(())
 }
 
 fn commit_epc_for_user_space_internal(start_addr: usize, size: usize) -> Result<()> {
@@ -361,6 +367,7 @@ fn commit_epc_for_user_space_with_new_permission(
         "commit epc: {:?}",
         VMRange::new_with_size(start_addr, size).unwrap()
     );
+    unreachable!();
     if new_perms != VMPerms::DEFAULT {
         UserRegionMem::commit_memory_with_new_permission(start_addr, size, new_perms)
     } else {

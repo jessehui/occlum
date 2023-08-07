@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use super::page_tracker::PageTracker;
 use super::vm_perms::VMPerms;
 use super::vm_range::VMRange;
-use super::vm_util::{FileBacked, PagePolicy, VMInitializer, VMMapOptions};
+use super::vm_util::{FileBacked, PagePolicy, VMInitializer, VMMapOptions, GB, KB, MB};
 use super::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -13,7 +13,8 @@ use intrusive_collections::rbtree::{Link, RBTree};
 use intrusive_collections::{intrusive_adapter, KeyAdapter};
 
 // Commit memory size when the PF occurs.
-pub const COMMIT_ONCE_SIZE: usize = 16 * PAGE_SIZE;
+pub const COMMIT_SIZE_UNIT: usize = 4 * KB;
+const COMMIT_MEM_MAX_SIZE: usize = 1 * GB;
 
 #[derive(Clone, Debug)]
 pub struct VMArea {
@@ -23,6 +24,7 @@ pub struct VMArea {
     pid: pid_t,
     pages: Option<PageTracker>, // Track the paging status of this VMA
     epc_type: EPCMemType,       // Track the type of the EPC to use specific APIs
+    pf_count: u64,
 }
 
 impl VMArea {
@@ -53,6 +55,7 @@ impl VMArea {
             pages,
             epc_type,
             // lazy_extend_perms,
+            pf_count: 0,
         };
         trace!("new vma = {:?}", new_vma);
         new_vma
@@ -75,6 +78,7 @@ impl VMArea {
             pages,
             epc_type,
             // lazy_extend_perms,
+            pf_count: 0,
         }
     }
 
@@ -301,10 +305,11 @@ impl VMArea {
             return_errno!(EINVAL, "reserved memory shouldn't trigger PF");
         }
 
-        if kernel_triggers {
+        if kernel_triggers || self.pf_count == u64::MAX {
             return self.commit_current_vma_whole();
         }
 
+        self.pf_count += 1;
         // The return commit_size can be 0 when other threads already commit the PF-containing range but the vma is not fully committed yet.
         let commit_size = self.commit_once_for_page_fault(pf_addr).unwrap();
 
@@ -488,6 +493,9 @@ impl VMArea {
         }
     }
 
+    // Current implementation with "unwrap()" can help us find the error quickly by panicing directly. Also, restoring VM state
+    // when this function fails will require some work and is not that simple.
+    // TODO: Return with Result instead of "unwrap()"" in this function.
     fn modify_protection_force(&self, protect_range: Option<&VMRange>, new_perms: VMPerms) {
         let protect_range = protect_range.unwrap_or_else(|| self.range());
 
@@ -504,24 +512,38 @@ impl VMArea {
     ) -> Result<()> {
         debug_assert!(self.range().is_superset_of(target_range));
         trace!("init range = {:?}", target_range);
-        let init_file = self
-            .init_file()
-            .map(|(file, offset)| (file.clone(), offset));
-        if let Some((file, offset)) = init_file {
-            let vma_range_start = self.range.start();
+        // let init_file = self
+        //     .init_file()
+        //     .map(|(file, offset)| (file.clone(), offset));
+        // if let Some((file, offset)) = init_file {
+        //     let vma_range_start = self.range.start();
 
-            let init_file_offset = offset + (target_range.start() - vma_range_start);
+        //     let init_file_offset = offset + (target_range.start() - vma_range_start);
 
-            self.init_file_backed_mem(
-                target_range,
-                &file,
-                init_file_offset,
-                self.perms(),
-                // force_perm,
-            )?;
-        } else if let Some(initializer) = initializer {
+        //     self.init_file_backed_mem(
+        //         target_range,
+        //         &file,
+        //         init_file_offset,
+        //         self.perms(),
+        //         // force_perm,
+        //     )?;
+        // } else
+        if let Some(initializer) = initializer {
             match initializer {
-                VMInitializer::FileBacked { .. } => unreachable!(), // Should be handled above
+                VMInitializer::FileBacked { file } => {
+                    let (file, offset) = file.init_file();
+                    let vma_range_start = self.range.start();
+
+                    let init_file_offset = offset + (target_range.start() - vma_range_start);
+
+                    self.init_file_backed_mem(
+                        target_range,
+                        &file,
+                        init_file_offset,
+                        self.perms(),
+                        // force_perm,
+                    )?;
+                }
                 VMInitializer::DoNothing() => {
                     if !self.perms().is_default() {
                         self.modify_protection_force(Some(target_range), self.perms());
@@ -539,26 +561,49 @@ impl VMArea {
                 _ => todo!(),
             }
         } else {
-            // PF triggered, no file-backed memory, just modify protection
-            let new_perms = self.perms();
-            // if new_perms.is_default() {
-            //     self.pages.as_mut().unwrap().commit_range_for_current_vma(target_range)?;
-            // } else {
-            self.pages
-                .as_mut()
-                .unwrap()
-                .commit_range_for_current_vma_with_new_permission(target_range, new_perms)?;
-            // }
-            // if !self.perms().is_default() {
-            //     self.modify_protection_force(Some(target_range), self.perms());
-            // }
+            let init_file = self
+                .init_file()
+                .map(|(file, offset)| (file.clone(), offset));
+            if let Some((file, offset)) = init_file {
+                let vma_range_start = self.range.start();
+
+                let init_file_offset = offset + (target_range.start() - vma_range_start);
+
+                self.pages
+                    .as_mut()
+                    .unwrap()
+                    .commit_range_for_current_vma(target_range)
+                    .unwrap();
+
+                self.init_file_backed_mem(
+                    target_range,
+                    &file,
+                    init_file_offset,
+                    self.perms(),
+                    // force_perm,
+                )?;
+            } else {
+                // PF triggered, no file-backed memory, just modify protection
+                let new_perms = self.perms();
+                // if new_perms.is_default() {
+                //     self.pages.as_mut().unwrap().commit_range_for_current_vma(target_range)?;
+                // } else {
+                self.pages
+                    .as_mut()
+                    .unwrap()
+                    .commit_range_for_current_vma_with_new_permission(target_range, new_perms)?;
+                // }
+                // if !self.perms().is_default() {
+                //     self.modify_protection_force(Some(target_range), self.perms());
+                // }
+            }
         }
 
         Ok(())
     }
 
     fn init_file_backed_mem(
-        &self,
+        &mut self,
         target_range: &VMRange,
         file: &FileRef,
         file_offset: usize,
@@ -635,6 +680,23 @@ impl VMArea {
         Ok(())
     }
 
+    fn get_commit_once_size(&self) -> usize {
+        let (multiplier, overflow) = 2_i32.overflowing_pow((self.pf_count * 2) as u32);
+        // if overflow {
+        //     return COMMIT_MEM_MAX_SIZE;
+        // }
+
+        let (result, overflow) = COMMIT_SIZE_UNIT.overflowing_mul(multiplier as usize);
+        println!(
+            "self pf_count = {:?}, commit once size = {:?}",
+            self.pf_count, result
+        );
+        // if overflow {
+        //     return COMMIT_MEM_MAX_SIZE;
+        // }
+        result
+    }
+
     pub fn commit_once_for_page_fault(&mut self, pf_addr: usize) -> Result<usize> {
         debug_assert!(!self.is_fully_committed());
         let mut early_return = false;
@@ -643,6 +705,7 @@ impl VMArea {
         let permission = self.perms();
         let committed = false;
         let mut uncommitted_ranges = self.pages().get_ranges(committed);
+        let commit_once_size = self.get_commit_once_size();
 
         for range in uncommitted_ranges
             .iter_mut()
@@ -654,11 +717,11 @@ impl VMArea {
                 info!("pf addr = 0x{:x}, uncommitted range = {:?}", pf_addr, range);
                 debug_assert!(range.contains(pf_addr));
                 range.set_start(align_down(pf_addr, PAGE_SIZE));
-                range.resize(std::cmp::min(range.size(), COMMIT_ONCE_SIZE));
+                range.resize(std::cmp::min(range.size(), commit_once_size));
                 info!("target commit range = {:?}", range);
-            } else if range.size() + total_commit_size > COMMIT_ONCE_SIZE {
+            } else if range.size() + total_commit_size > commit_once_size {
                 // This is not first time commit. Try to commit until reaching the COMMIT_ONCE_SIZE
-                range.resize(COMMIT_ONCE_SIZE - total_commit_size);
+                range.resize(commit_once_size - total_commit_size);
             }
             info!("after resize, target range = {:?}", range);
 
@@ -667,7 +730,7 @@ impl VMArea {
 
             total_commit_size += range.size();
             info!("total_commit_size + range size {:?}", range.size());
-            if total_commit_size >= COMMIT_ONCE_SIZE {
+            if total_commit_size >= commit_once_size {
                 break;
             }
         }
@@ -675,6 +738,10 @@ impl VMArea {
         if self.pages().is_fully_committed() {
             info!("vma is fully committed");
             self.pages = None;
+        }
+
+        if self.pf_count > 2 && total_commit_size <= COMMIT_SIZE_UNIT {
+            self.pf_count = u64::MAX;
         }
 
         info!("ret total_commit_size = {:?}", total_commit_size);
@@ -686,12 +753,10 @@ impl VMArea {
         debug_assert!(!self.is_fully_committed());
         debug_assert!(self.init_file().is_none());
 
-        let perms = self.perms();
-        // Commit EPC
-        let new_committed_ranges = self.pages_mut().commit_current_vma_whole(perms)?;
-        // debug_assert!(commit_mem_length > 0);
-
-        self.pages = None;
+        // let perms = self.perms();
+        // // Commit EPC
+        // let new_committed_ranges = self.pages_mut().commit_current_vma_whole(perms)?;
+        // // debug_assert!(commit_mem_length > 0);
 
         // // Reset perms if needed
         // let need_reset_perms = !self.is_reserved_only() && self.init_file().is_some();
@@ -701,9 +766,11 @@ impl VMArea {
 
         // Init new committed memory
         // let range = self.range().clone();
-        // new_committed_ranges.into_iter().for_each(|range| {
-        //     self.init_committed_memory_internal(&range, None).unwrap();
-        // });
+        let mut uncommitted_ranges = self.pages.as_ref().unwrap().get_ranges(false);
+        for range in uncommitted_ranges {
+            self.init_committed_memory_internal(&range, None).unwrap();
+        }
+        self.pages = None;
 
         Ok(())
     }

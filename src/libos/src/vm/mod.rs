@@ -95,12 +95,12 @@ pub fn do_mmap(
     offset: usize,
 ) -> Result<usize> {
     if flags.contains(MMapFlags::MAP_ANONYMOUS) {
-        debug!(
+        info!(
             "mmap: addr: {:#x}, size: {:#x}, perms: {:?}, flags: {:?}",
             addr, size, perms, flags,
         );
     } else {
-        debug!(
+        info!(
             "mmap: addr: {:#x}, size: {:#x}, perms: {:?}, flags: {:?}, fd: {:?}, offset: {:?}",
             addr, size, perms, flags, fd, offset
         );
@@ -110,7 +110,7 @@ pub fn do_mmap(
 }
 
 pub fn do_munmap(addr: usize, size: usize) -> Result<()> {
-    debug!("munmap: addr: {:#x}, size: {:#x}", addr, size);
+    info!("munmap: addr: {:#x}, size: {:#x}", addr, size);
     let current = current!();
     current!().vm().munmap(addr, size)
 }

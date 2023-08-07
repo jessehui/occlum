@@ -541,10 +541,10 @@ impl ProcessVM {
                 // With MAP_STACK, the mmaped memory will be used as user's stack. If not committed, the PF can occurs
                 // when switching to user space and can't be handled correctly by us.
                 PagePolicy::CommitNow
-            } else if !flags.contains(MMapFlags::MAP_ANONYMOUS) {
-                // Commit Now for file-backed mmap
-                // TODO: Use Commit on demand policy in the future
-                PagePolicy::CommitNow
+            // } else if !flags.contains(MMapFlags::MAP_ANONYMOUS) {
+            //     // Commit Now for file-backed mmap
+            //     // TODO: Use Commit on demand policy in the future
+            //     PagePolicy::CommitNow
             } else {
                 PagePolicy::CommitOnDemand
             }
