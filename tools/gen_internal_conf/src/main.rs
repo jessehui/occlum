@@ -377,14 +377,16 @@ fn main() {
                     return;
                 }
                 let user_region_mem_size = config_user_space_max_size + extra_user_region.unwrap();
+                // let user_region_mem_size = config_user_space_max_size;
                 (
                     config_user_space_init_size as u64,
                     Some(user_region_mem_size as u64),
                 )
             } else {
+                // let extra_reserved_mem = DEFAULT_CONFIG.extra_rsrv_mem_for_no_edmm;
+                // let reserved_mem_size = config_user_space_max_size + extra_reserved_mem;
                 // For platforms without EDMM support, use the max value for the user space
-                let extra_reserved_mem = DEFAULT_CONFIG.extra_rsrv_mem_for_no_edmm;
-                let reserved_mem_size = config_user_space_max_size + extra_reserved_mem;
+                let reserved_mem_size = config_user_space_max_size;
                 (reserved_mem_size as u64, None)
             }
         };

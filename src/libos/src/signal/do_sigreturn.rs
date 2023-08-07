@@ -5,9 +5,8 @@ use super::{SigAction, SigActionFlags, SigDefaultAction, SigSet, Signal};
 use crate::lazy_static::__Deref;
 use crate::prelude::*;
 use crate::process::{ProcessRef, TermStatus, ThreadRef};
-use crate::syscall::{CpuContext, FpRegs};
+use crate::syscall::{CpuContext, ExtraContext, FpRegs};
 use aligned::{Aligned, A16};
-use core::arch::x86_64::{_fxrstor, _fxsave};
 use std::{ptr, slice};
 
 pub fn do_rt_sigreturn(curr_user_ctxt: &mut CpuContext) -> Result<()> {
@@ -32,13 +31,19 @@ pub fn do_rt_sigreturn(curr_user_ctxt: &mut CpuContext) -> Result<()> {
     *current!().sig_mask().write().unwrap() = SigSet::from_c(last_ucontext.uc_sigmask);
     // Restore user context
     *curr_user_ctxt = last_ucontext.uc_mcontext.inner;
+    info!(
+        "do_rt_sigreturn extra context ptr = {:?}",
+        curr_user_ctxt.extra_context_ptr
+    );
 
     // Restore the floating point registers to a temp area
     // The floating point registers would be recoved just
     // before return to user's code
-    let mut fpregs = Box::new(unsafe { FpRegs::from_slice(&last_ucontext.fpregs) });
-    curr_user_ctxt.fpregs = Box::into_raw(fpregs);
-    curr_user_ctxt.fpregs_on_heap = 1; // indicates the fpregs is on heap
+
+    // let mut fpregs = Box::new(unsafe { FpRegs::from_slice(&last_ucontext.fpregs) });
+    // curr_user_ctxt.extra_context_ptr = Box::into_raw(fpregs) as *mut u8;
+    // curr_user_ctxt.extra_context = ExtraContext::FpregsOnHeap; // indicates the fpregs is on heap
+
     Ok(())
 }
 
@@ -221,8 +226,10 @@ fn handle_signals_by_user(
                 let thread = current!();
                 let sig_stack = thread.sig_stack().lock().unwrap();
                 if let Some(stack) = *sig_stack {
+                    info!("SA_ONSTACK stack = {:?}", stack);
                     if !stack.contains(curr_user_ctxt.rsp as usize) {
                         let stack_top = stack.sp() + stack.size();
+                        info!("SA_ONSTACK stack top = {:x}", stack_top);
                         return stack_top;
                     }
                 }
@@ -264,17 +271,25 @@ fn handle_signals_by_user(
         ucontext.uc_mcontext.inner = *curr_user_ctxt;
 
         // Save the floating point registers
-        if curr_user_ctxt.fpregs != ptr::null_mut() {
-            ucontext
-                .fpregs
-                .copy_from_slice(unsafe { curr_user_ctxt.fpregs.as_ref().unwrap().as_slice() });
-            // Clear the floating point registers, since we do not need to recover is when this syscall return
-            curr_user_ctxt.fpregs = ptr::null_mut();
+        // if curr_user_ctxt.fpregs != ptr::null_mut() {
+        if !matches!(curr_user_ctxt.extra_context, ExtraContext::Xsave)
+            && curr_user_ctxt.extra_context_ptr != ptr::null_mut()
+        {
+            panic!();
+            ucontext.fpregs.copy_from_slice(unsafe {
+                (curr_user_ctxt.extra_context_ptr as *mut FpRegs)
+                    .as_ref()
+                    .unwrap()
+                    .as_slice()
+            });
+            // Clear the floating point registers, since we do not need to recover this when this syscall return
+            curr_user_ctxt.extra_context_ptr = ptr::null_mut();
         } else {
             // We need a correct fxsave structure in the buffer,
             // because the app may modify part of it to update the
             // floating point after the signal handler finished.
             let fpregs = FpRegs::save();
+            info!("fpregs = {:?}", fpregs);
             ucontext.fpregs.copy_from_slice(fpregs.as_slice());
         }
 
@@ -318,6 +333,7 @@ impl Stack {
         }
         let pointer = stack_top;
         let bottom = stack_top - stack_size;
+        info!("new stack start: {:x}, end: {:x}", pointer, bottom);
         Ok(Stack { pointer, bottom })
     }
 

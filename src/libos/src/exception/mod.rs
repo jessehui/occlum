@@ -6,10 +6,8 @@ use self::syscall::{handle_syscall_exception, SYSCALL_OPCODE};
 use super::*;
 use crate::signal::{FaultSignal, SigSet};
 use crate::syscall::exception_interrupt_syscall_c_abi;
-use crate::syscall::{CpuContext, FpRegs, SyscallNum};
+use crate::syscall::{CpuContext, ExtraContext, SyscallNum};
 use crate::vm::{enclave_page_fault_handler, USER_SPACE_VM_MANAGER};
-use aligned::{Aligned, A16};
-use core::arch::x86_64::_fxsave;
 use sgx_types::*;
 use sgx_types::{
     sgx_cpu_context_t, sgx_exception_type_t, sgx_exception_vector_t, sgx_misc_exinfo_t,
@@ -31,29 +29,6 @@ mod cpuid;
 mod rdtsc;
 mod syscall;
 
-extern "C" {
-    pub fn sgx_register_exception_handler(
-        is_first_handler: uint32_t,
-        exception_handler: new_sgx_exception_handler_t,
-    ) -> *const c_void;
-}
-
-#[allow(non_camel_case_types)]
-#[repr(C)]
-pub struct new_sgx_exception_info_t {
-    pub cpu_context: sgx_cpu_context_t,
-    pub exception_vector: sgx_exception_vector_t,
-    pub exception_type: sgx_exception_type_t,
-    pub exinfo: sgx_misc_exinfo_t,
-    xsave_size: u64,
-    reserved: [u64; 2],
-    xsave_area: [u8; 0],
-}
-
-#[allow(non_camel_case_types)]
-pub type new_sgx_exception_handler_t =
-    extern "C" fn(info: *mut new_sgx_exception_info_t) -> int32_t;
-
 pub fn register_exception_handlers() {
     setup_cpuid_info();
     // Register handlers whose priorities go from low to high
@@ -64,9 +39,9 @@ pub fn register_exception_handlers() {
 }
 
 #[no_mangle]
-extern "C" fn handle_exception(info: *mut new_sgx_exception_info_t) -> i32 {
-    let mut xsave_area = unsafe { &mut *info }.xsave_area.as_mut_ptr();
-    let mut fpregs: FpRegs = FpRegs::save();
+extern "C" fn handle_exception(info: *mut sgx_exception_info_t) -> i32 {
+    // let mut xsave_area = unsafe { &mut *info }.xsave_area.as_mut_ptr();
+    // let mut fpregs: FpRegs = FpRegs::save();
     {
         let info = unsafe { &mut *info };
         // If it is #PF, but the triggered code is not user's code and the #PF address is in the userspace, then
@@ -120,8 +95,8 @@ extern "C" fn handle_exception(info: *mut new_sgx_exception_info_t) -> i32 {
         exception_interrupt_syscall_c_abi(
             SyscallNum::HandleException as u32,
             info as *mut _,
-            &mut fpregs as *mut FpRegs,
-            xsave_area,
+            // &mut fpregs as *mut FpRegs,
+            // xsave_area,
         )
     };
     unreachable!();
@@ -129,9 +104,9 @@ extern "C" fn handle_exception(info: *mut new_sgx_exception_info_t) -> i32 {
 
 /// Exceptions are handled as a special kind of system calls.
 pub fn do_handle_exception(
-    info: *mut new_sgx_exception_info_t,
-    fpregs: *mut FpRegs,
-    xsave_area: *mut u8,
+    info: *mut sgx_exception_info_t,
+    // fpregs: *mut FpRegs,
+    // xsave_area: *mut u8,
     user_context: *mut CpuContext,
 ) -> Result<isize> {
     let info = unsafe { &mut *info };
@@ -140,8 +115,10 @@ pub fn do_handle_exception(
 
     let user_context = unsafe { &mut *user_context };
     *user_context = CpuContext::from_sgx(&info.cpu_context);
-    user_context.fpregs = fpregs;
-    user_context.xsave_area = xsave_area;
+    let xsave_area = info.xsave_area.as_mut_ptr();
+    // user_context.fpregs = fpregs;
+    user_context.extra_context = ExtraContext::Xsave;
+    user_context.extra_context_ptr = xsave_area;
 
     // Try to do instruction emulation first
     if info.exception_vector == sgx_exception_vector_t::SGX_EXCEPTION_VECTOR_UD {
