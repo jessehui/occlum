@@ -122,7 +122,7 @@ macro_rules! process_syscall_table_with_callback {
             (Mremap = 25) => do_mremap(old_addr: usize, old_size: usize, new_size: usize, flags: i32, new_addr: usize),
             (Msync = 26) => do_msync(addr: usize, size: usize, flags: u32),
             (Mincore = 27) => handle_unsupported(),
-            (Madvise = 28) => handle_unsupported(),
+            (Madvise = 28) => do_madvice(addr: usize, length: usize, advice: i32),
             (Shmget = 29) => do_shmget(key: key_t, size: size_t, shmflg: i32),
             (Shmat = 30) => do_shmat(shmid: i32, shmaddr: usize, shmflg: i32),
             (Shmctl = 31) => do_shmctl(shmid: i32, cmd: i32, buf: *mut shmids_t),
@@ -753,66 +753,18 @@ fn do_sysret(user_context: &mut CpuContext) -> ! {
     if current!().status() != ThreadStatus::Exited {
         if user_context.extra_context_ptr != ptr::null_mut() {
             match user_context.extra_context {
-                ExtraContext::FpregsOnStack => {
+                ExtraContext::Fpregs => {
                     let fpregs = user_context.extra_context_ptr as *mut FpRegs;
                     unsafe { fpregs.as_ref().unwrap().restore() };
-                }
-                ExtraContext::FpregsOnHeap => {
-                    let fpregs =
-                        unsafe { Box::from_raw(user_context.extra_context_ptr as *mut FpRegs) };
-                    fpregs.restore();
                 }
                 ExtraContext::Xsave => {
                     let xsave_area = user_context.extra_context_ptr;
                     unsafe { (&*(xsave_area as *mut XsaveArea)).restore() };
                 }
             }
-
-            // user_context.extra_context_ptr = ptr::null_mut();
         }
-
-        // // Restore the floating point registers
-        // // Todo: Is it correct to do fxstor in kernel?
-        // let fpregs = user_context.fpregs;
-        // if (fpregs != ptr::null_mut()) {
-        //     if user_context.fpregs_on_heap == 1 {
-        //         let fpregs = unsafe { Box::from_raw(user_context.fpregs as *mut FpRegs) };
-        //         fpregs.restore();
-        //     } else {
-        //         unsafe { fpregs.as_ref().unwrap().restore() };
-        //     }
-        // }
-
-        // let xsave_area = user_context.xsave_area;
-        // info!("xsave_area = {:x}", xsave_area as usize);
-        // if xsave_area != ptr::null_mut() {
-        //     if user_context.xsave_area_on_heap == 1 {
-        //         let xsave_area =
-        //             unsafe { Box::from_raw(user_context.xsave_area as *mut XsaveArea) };
-        //         info!("heap xsave area = {:?}", xsave_area);
-        //         xsave_area.restore();
-        //         user_context.xsave_area = ptr::null_mut();
-        //     } else {
-        //         info!("restore xsave_area");
-        //         // unsafe {
-        //         //     restore_xregs(xsave_area);
-        //         // }
-        //         unsafe { (&*(xsave_area as *mut XsaveArea)).restore() };
-        //         // unsafe
-        //         user_context.xsave_area = ptr::null_mut();
-        //     }
-        // }
         unsafe { __occlum_sysret(user_context) } // jump to user space
     } else {
-        // if user_context.xsave_area != ptr::null_mut() && user_context.xsave_area_on_heap == 1 {
-        //     drop(unsafe { Box::from_raw(user_context.xsave_area as *mut XsaveArea) });
-        // }
-        if matches!(user_context.extra_context, ExtraContext::FpregsOnHeap)
-            && user_context.extra_context_ptr != ptr::null_mut()
-        {
-            drop(unsafe { Box::from_raw(user_context.extra_context_ptr as *mut FpRegs) })
-        }
-
         unsafe { do_exit_task() } // exit enclave
     }
     unreachable!("__occlum_sysret never returns!");
@@ -876,6 +828,10 @@ fn do_brk(new_brk_addr: usize) -> Result<isize> {
 fn do_msync(addr: usize, size: usize, flags: u32) -> Result<isize> {
     let flags = MSyncFlags::from_u32(flags)?;
     vm::do_msync(addr, size, flags)?;
+    Ok(0)
+}
+
+fn do_madvice(addr: usize, length: usize, advice: i32) -> Result<isize> {
     Ok(0)
 }
 
@@ -1028,8 +984,6 @@ fn handle_unsupported() -> Result<isize> {
 /// Floating point registers
 ///
 /// Note. The area is used to save fxsave result
-//#[derive(Clone, Copy)]
-#[derive(Debug)]
 #[repr(C)]
 pub struct FpRegs {
     inner: Aligned<A16, [u8; 512]>,
@@ -1049,7 +1003,6 @@ impl FpRegs {
     /// Restore the current CPU floating pointer states from this FpRegs instance
     pub fn restore(&self) {
         info!("restore fpregs from {:?}", self.inner.as_ptr());
-        info!("fpregs = {:?}", self);
         unsafe { _fxrstor(self.inner.as_ptr()) };
     }
 
@@ -1084,8 +1037,6 @@ impl XsaveArea {
         let mut xsave_area = MaybeUninit::<Self>::uninit();
         unsafe {
             info!("xsave save");
-            // _fxsave(fpregs.as_mut_ptr() as *mut u8);
-
             save_xregs(xsave_area.as_mut_ptr() as *mut u8);
             xsave_area.assume_init()
         }
@@ -1094,7 +1045,6 @@ impl XsaveArea {
     /// Restore the current CPU floating pointer states from this FpRegs instance
     pub fn restore(&self) {
         info!("restore xsave: {:?}", self.inner.as_ptr());
-        // unsafe { _fxrstor(self.inner.as_ptr()) };
         unsafe {
             restore_xregs(self.inner.as_ptr());
         }
@@ -1136,14 +1086,13 @@ pub struct CpuContext {
 
 #[derive(Clone, Copy, Debug)]
 pub enum ExtraContext {
-    FpregsOnStack = 0,
-    FpregsOnHeap = 1,
-    Xsave = 2, // on stack
+    Fpregs = 0,
+    Xsave = 1, // on stack
 }
 
 impl Default for ExtraContext {
     fn default() -> Self {
-        Self::FpregsOnStack
+        Self::Fpregs
     }
 }
 

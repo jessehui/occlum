@@ -2,10 +2,10 @@
 
 // use super::vm_area::COMMIT_ONCE_SIZE;
 use super::*;
-use modular_bitfield::{
-    bitfield,
-    specifiers::{B1, B13, B16},
-};
+// use modular_bitfield::{
+//     bitfield,
+//     specifiers::{B1, B13, B16},
+// };
 use sgx_trts::emm::{
     AllocAddr, AllocFlags, AllocOptions, EmmAlloc, HandleResult, PageFaultHandler, Perm,
 };
@@ -61,7 +61,7 @@ impl Page {
 }
 
 lazy_static! {
-    static ref ZERO_PAGES: Vec<u8> = Page::new_page_aligned_vec(0);
+    static ref ZERO_PAGES: Vec<u8> = Page::new_page_aligned_vec(PAGE_SIZE);
 }
 
 pub trait EPCAllocator {
@@ -189,14 +189,36 @@ impl UserRegionMem {
         new_perms: VMPerms,
     ) -> Result<()> {
         let ptr = NonNull::<u8>::new(start_addr as *mut u8).unwrap();
-        // debug_assert!(size <= COMMIT_ONCE_SIZE);
-        let data = &ZERO_PAGES[..size];
+        let data = Page::new_page_aligned_vec(size);
         let perm = Perm::from_bits(new_perms.bits()).unwrap();
         info!(
             "commit_with_data ptr = {:?}, size = {:?}, perm = {:?}, occlum_perm = {:?}",
             ptr, size, perm, new_perms
         );
-        unsafe { EmmAlloc::commit_with_data(ptr, data, perm) }
+        unsafe { EmmAlloc::commit_with_data(ptr, data.as_slice(), perm) }
+            .map_err(|e| errno!(Errno::from(e as u32)))?;
+        Ok(())
+    }
+
+    fn commit_memory_and_init_with_file(
+        start_addr: usize,
+        size: usize,
+        file: &FileRef,
+        file_offset: usize,
+        new_perms: VMPerms,
+    ) -> Result<()> {
+        let mut data = Page::new_page_aligned_vec(size);
+        let len = file
+            .read_at(file_offset, data.as_mut_slice())
+            .map_err(|_| errno!(EACCES, "failed to init memory from file"))?;
+
+        let ptr = NonNull::<u8>::new(start_addr as *mut u8).unwrap();
+        let perm = Perm::from_bits(new_perms.bits()).unwrap();
+        info!(
+            "commit_with_data ptr = {:?}, size = {:?}, perm = {:?}, occlum_perm = {:?}",
+            ptr, size, perm, new_perms
+        );
+        unsafe { EmmAlloc::commit_with_data(ptr, data.as_slice(), perm) }
             .map_err(|e| errno!(Errno::from(e as u32)))?;
         Ok(())
     }
@@ -334,18 +356,12 @@ pub fn commit_epc_for_user_space(
     size: usize,
     new_perms: Option<VMPerms>,
 ) -> Result<()> {
-    // if let Some(new_perms) = new_perms {
-    //     // To make it concurrent safe when commit epc and set new permission, we need to use EACCEPTCOPY
-    //     commit_epc_for_user_space_with_new_permission(start_addr, size, new_perms)
-    // } else {
-    //     commit_epc_for_user_space_internal(start_addr, size)
-    // }
-
-    commit_epc_for_user_space_internal(start_addr, size)?;
-    if new_perms.is_some() && new_perms.unwrap() != VMPerms::DEFAULT {
-        UserRegionMem::modify_protection(start_addr, size, new_perms.unwrap())?;
+    if let Some(new_perms) = new_perms {
+        // To make it concurrent safe when commit epc and set new permission, we need to use EACCEPTCOPY
+        commit_epc_for_user_space_with_new_permission(start_addr, size, new_perms)
+    } else {
+        commit_epc_for_user_space_internal(start_addr, size)
     }
-    Ok(())
 }
 
 fn commit_epc_for_user_space_internal(start_addr: usize, size: usize) -> Result<()> {
@@ -367,12 +383,22 @@ fn commit_epc_for_user_space_with_new_permission(
         "commit epc: {:?}",
         VMRange::new_with_size(start_addr, size).unwrap()
     );
-    unreachable!();
+
     if new_perms != VMPerms::DEFAULT {
         UserRegionMem::commit_memory_with_new_permission(start_addr, size, new_perms)
     } else {
         UserRegionMem::commit_memory(start_addr, size)
     }
+}
+
+pub fn commit_memory_and_init_with_file(
+    start_addr: usize,
+    size: usize,
+    file: &FileRef,
+    file_offset: usize,
+    new_perms: VMPerms,
+) -> Result<()> {
+    UserRegionMem::commit_memory_and_init_with_file(start_addr, size, file, file_offset, new_perms)
 }
 
 // This is a dummy function for sgx_mm_alloc. The real handler is "enclave_page_fault_handler" shown below.

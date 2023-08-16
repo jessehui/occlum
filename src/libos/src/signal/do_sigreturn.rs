@@ -36,13 +36,8 @@ pub fn do_rt_sigreturn(curr_user_ctxt: &mut CpuContext) -> Result<()> {
         curr_user_ctxt.extra_context_ptr
     );
 
-    // Restore the floating point registers to a temp area
-    // The floating point registers would be recoved just
-    // before return to user's code
-
-    // let mut fpregs = Box::new(unsafe { FpRegs::from_slice(&last_ucontext.fpregs) });
-    // curr_user_ctxt.extra_context_ptr = Box::into_raw(fpregs) as *mut u8;
-    // curr_user_ctxt.extra_context = ExtraContext::FpregsOnHeap; // indicates the fpregs is on heap
+    // Don't need to restore the floating point registers to a temp area.
+    // The whole xsave area will be restored when this syscall returns.
 
     Ok(())
 }
@@ -289,7 +284,6 @@ fn handle_signals_by_user(
             // because the app may modify part of it to update the
             // floating point after the signal handler finished.
             let fpregs = FpRegs::save();
-            info!("fpregs = {:?}", fpregs);
             ucontext.fpregs.copy_from_slice(fpregs.as_slice());
         }
 

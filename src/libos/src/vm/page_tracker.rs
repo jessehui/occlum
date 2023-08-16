@@ -320,11 +320,15 @@ impl PageTracker {
     }
 
     // Commit memory of a specific range for the current VMA (VMATracker). The range should be verified by caller.
-    pub fn commit_range_for_current_vma(&mut self, range: &VMRange) -> Result<()> {
+    pub fn commit_range_for_current_vma(
+        &mut self,
+        range: &VMRange,
+        new_perms: Option<VMPerms>,
+    ) -> Result<()> {
         debug_assert!(self.type_ == TrackerType::VMATracker);
         debug_assert!(self.range().is_superset_of(range));
 
-        vm_epc::commit_epc_for_user_space(range.start(), range.size(), None)?;
+        vm_epc::commit_epc_for_user_space(range.start(), range.size(), new_perms)?;
 
         self.commit_pages_internal(range.start(), range.size());
         self.update_pages_for_global_tracker(range.start(), range.size());
@@ -332,15 +336,23 @@ impl PageTracker {
         Ok(())
     }
 
-    pub fn commit_range_for_current_vma_with_new_permission(
+    pub fn commit_memory_and_init_with_file(
         &mut self,
         range: &VMRange,
+        file: &FileRef,
+        file_offset: usize,
         new_perms: VMPerms,
     ) -> Result<()> {
         debug_assert!(self.type_ == TrackerType::VMATracker);
         debug_assert!(self.range().is_superset_of(range));
 
-        vm_epc::commit_epc_for_user_space(range.start(), range.size(), Some(new_perms))?;
+        vm_epc::commit_memory_and_init_with_file(
+            range.start(),
+            range.size(),
+            file,
+            file_offset,
+            new_perms,
+        )?;
 
         self.commit_pages_internal(range.start(), range.size());
         self.update_pages_for_global_tracker(range.start(), range.size());
