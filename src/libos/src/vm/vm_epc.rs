@@ -257,8 +257,9 @@ impl SGXPlatform {
                 VMRange::new(reserved_mem_start_addr + init_size, user_region_start_addr)?;
 
             info!(
-                "allocated user space range is {:?}, gap range is {:?}",
-                total_user_space_range, gap_range
+                "allocated user space range is {:?}, gap range is {:?}. reserved_mem range is {:?}, user region range is {:?}",
+                total_user_space_range, gap_range, VMRange::new_with_size(reserved_mem_start_addr, init_size),
+                VMRange::new_with_size(user_region_start_addr, user_region_size)
             );
 
             Ok((total_user_space_range, Some(gap_range)))

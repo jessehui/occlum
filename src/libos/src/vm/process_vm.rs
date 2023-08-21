@@ -11,6 +11,7 @@ use super::vm_util::{
     FileBacked, PagePolicy, VMInitializer, VMMapAddr, VMMapOptions, VMMapOptionsBuilder,
     VMRemapOptions,
 };
+use sgx_trts::libc::ENOTSUP;
 use std::collections::HashSet;
 use util::sync::rw_lock::RwLockWriteGuard;
 
@@ -545,6 +546,8 @@ impl ProcessVM {
                 // Commit Now for file-backed mmap
                 // TODO: Use Commit on demand policy in the future
                 PagePolicy::CommitNow
+            } else if perms != VMPerms::DEFAULT && size < 1 * 1048576 {
+                PagePolicy::CommitNow
             } else {
                 PagePolicy::CommitOnDemand
             }
@@ -685,5 +688,35 @@ impl MSyncFlags {
             return_errno!(EINVAL, "must be either sync or async");
         }
         Ok(flags)
+    }
+}
+
+#[allow(non_camel_case_types)]
+#[repr(i32)]
+#[derive(Debug)]
+pub enum MadviceFlags {
+    MADV_NORMAL = 0,
+    MADV_RANDOM = 1,
+    MADV_SEQUENTIAL = 2,
+    MADV_WILLNEED = 3,
+    MADV_DONTNEED = 4,
+}
+
+impl MadviceFlags {
+    pub fn from_i32(raw: i32) -> Result<Self> {
+        const MADV_NORMAL: i32 = 0;
+        const MADV_RANDOM: i32 = 1;
+        const MADV_SEQUENTIAL: i32 = 2;
+        const MADV_WILLNEED: i32 = 3;
+        const MADV_DONTNEED: i32 = 4;
+
+        match raw {
+            MADV_NORMAL => Ok(MadviceFlags::MADV_NORMAL),
+            MADV_RANDOM => Ok(MadviceFlags::MADV_RANDOM),
+            MADV_SEQUENTIAL => Ok(MadviceFlags::MADV_SEQUENTIAL),
+            MADV_WILLNEED => Ok(MadviceFlags::MADV_WILLNEED),
+            MADV_DONTNEED => Ok(MadviceFlags::MADV_DONTNEED),
+            _ => return_errno!(ENOSYS, "unknown madvice flags"),
+        }
     }
 }

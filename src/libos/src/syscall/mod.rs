@@ -60,7 +60,7 @@ use crate::signal::{
     do_rt_sigtimedwait, do_sigaltstack, do_tgkill, do_tkill, sigaction_t, siginfo_t, sigset_t,
     stack_t,
 };
-use crate::vm::{MMapFlags, MRemapFlags, MSyncFlags, VMPerms};
+use crate::vm::{MMapFlags, MRemapFlags, MSyncFlags, MadviceFlags, VMPerms};
 use crate::{fs, process, std, vm};
 
 use super::*;
@@ -832,6 +832,8 @@ fn do_msync(addr: usize, size: usize, flags: u32) -> Result<isize> {
 }
 
 fn do_madvice(addr: usize, length: usize, advice: i32) -> Result<isize> {
+    let flags = MadviceFlags::from_i32(advice)?;
+    vm::do_madvice(addr, length, flags)?;
     Ok(0)
 }
 

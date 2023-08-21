@@ -219,7 +219,6 @@ impl PageTracker {
                     }
                     _ => unreachable!(),
                 }
-                // i += 1;
             } else {
                 match (start, end) {
                     (None, None) => {
@@ -241,7 +240,6 @@ impl PageTracker {
                         unreachable!()
                     }
                 }
-                // i += 1;
             }
         }
 

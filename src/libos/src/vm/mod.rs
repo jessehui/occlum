@@ -78,7 +78,9 @@ mod vm_util;
 use self::vm_layout::VMLayout;
 
 pub use self::chunk::{ChunkRef, ChunkType};
-pub use self::process_vm::{MMapFlags, MRemapFlags, MSyncFlags, ProcessVM, ProcessVMBuilder};
+pub use self::process_vm::{
+    MMapFlags, MRemapFlags, MSyncFlags, MadviceFlags, ProcessVM, ProcessVMBuilder,
+};
 pub use self::user_space_vm::USER_SPACE_VM_MANAGER;
 pub use self::vm_area::VMArea;
 pub use self::vm_epc::enclave_page_fault_handler;
@@ -153,6 +155,11 @@ pub fn do_msync(addr: usize, size: usize, flags: MSyncFlags) -> Result<()> {
         warn!("not support MS_ASYNC");
     }
     current!().vm().msync(addr, size)
+}
+
+pub fn do_madvice(addr: usize, length: usize, advice: MadviceFlags) -> Result<()> {
+    warn!("madvice flags = {:?}", advice);
+    Ok(())
 }
 
 pub const PAGE_SIZE: usize = 4096;

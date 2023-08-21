@@ -370,21 +370,24 @@ fn main() {
         // Calculate the actual memory size for different regions
         let (reserved_mem_size, user_region_mem_size) = {
             if instance_is_for_edmm_platform {
-                // For platforms with EDMM support, we need extra memory SDK usage. This might be fixed by SGX SDK in the future.
+                // For platforms with EDMM support, we need extra memory for SDK usage. This might be fixed by SGX SDK in the future.
                 let extra_user_region = parse_memory_size(DEFAULT_CONFIG.extra_user_region_for_sdk);
                 if extra_user_region.is_err() {
                     println!("The extra_user_region_for_sdk in default config is not correct.");
                     return;
                 }
-                let user_region_mem_size = config_user_space_max_size + extra_user_region.unwrap();
-                // let user_region_mem_size = config_user_space_max_size;
+                let user_region_mem_size = if config_user_space_max_size == config_user_space_init_size {
+                    // SDK still need user region to track the EMA.
+                    extra_user_region.unwrap()
+                } else {
+                    config_user_space_max_size + extra_user_region.unwrap()
+                };
+
                 (
                     config_user_space_init_size as u64,
                     Some(user_region_mem_size as u64),
                 )
             } else {
-                // let extra_reserved_mem = DEFAULT_CONFIG.extra_rsrv_mem_for_no_edmm;
-                // let reserved_mem_size = config_user_space_max_size + extra_reserved_mem;
                 // For platforms without EDMM support, use the max value for the user space
                 let reserved_mem_size = config_user_space_max_size;
                 (reserved_mem_size as u64, None)
