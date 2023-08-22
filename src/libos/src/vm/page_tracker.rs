@@ -36,7 +36,7 @@ lazy_static! {
         RwLock::new(PageChunkManager::new(USER_SPACE_VM_MANAGER.range()));
 }
 
-const PAGE_CHUNK_UNIT: usize = 256 * MB;
+const PAGE_CHUNK_UNIT: usize = 4 * MB;
 const PAGE_CHUNK_PAGE_NUM: usize = PAGE_CHUNK_UNIT / PAGE_SIZE;
 
 pub struct PageChunkManager {
@@ -185,8 +185,7 @@ impl PageTracker {
         let mut ret = Vec::new();
         let mut start = None;
         let mut end = None;
-        // let mut i = 0;
-        // while i < self.inner.len() {
+
         for i in 0..self.inner.len() {
             if self.inner[i] == committed {
                 match (start, end) {
@@ -257,7 +256,7 @@ impl PageTracker {
 
     pub fn split_for_new_range(&mut self, new_range: &VMRange) {
         debug_assert!(self.range.is_superset_of(new_range));
-        // debug_assert!(self.range.start() <= new_start && new_start < self.range.end());
+
         let new_start = new_range.start();
         let page_num = new_range.size() / PAGE_SIZE;
 
@@ -281,12 +280,12 @@ impl PageTracker {
     }
 
     // Commit memory for the whole current VMA (VMATracker)
-    pub fn commit_current_vma_whole(&mut self, perms: VMPerms) -> Result<Vec<VMRange>> {
+    pub fn commit_current_vma_whole(&mut self, perms: VMPerms) -> Result<()> {
         debug_assert!(self.type_ == TrackerType::VMATracker);
-        let mut ret_vec = Vec::new();
+        // let mut ret_vec = Vec::new();
 
         if self.is_fully_committed() {
-            return Ok(ret_vec);
+            return Ok(());
         }
 
         // Commit EPC
@@ -297,16 +296,24 @@ impl PageTracker {
                 Some(perms),
             )
             .unwrap();
-            ret_vec.push(self.range().clone());
+            // ret_vec.push(self.range().clone());
         } else {
             debug_assert!(self.is_partially_committed());
             let uncommitted_ranges = self.get_ranges(false);
             for range in uncommitted_ranges {
                 vm_epc::commit_epc_for_user_space(range.start(), range.size(), Some(perms))
                     .unwrap();
-                ret_vec.push(range);
+                // ret_vec.push(range);
             }
         }
+
+        // // SDK has tracked the committed pages also
+        // vm_epc::commit_epc_for_user_space(
+        //             self.range().start(),
+        //             self.range().size(),
+        //             Some(perms),
+        //         )
+        //         .unwrap();
 
         // Update the tracker
         self.inner.fill(true);
@@ -314,7 +321,7 @@ impl PageTracker {
 
         self.update_pages_for_global_tracker(self.range().start(), self.range().size());
 
-        Ok(ret_vec)
+        Ok(())
     }
 
     // Commit memory of a specific range for the current VMA (VMATracker). The range should be verified by caller.
@@ -500,8 +507,9 @@ impl PageTracker {
             let page_start_id = (intersection_range.start() - self.range().start()) / PAGE_SIZE;
             let page_num = intersection_range.size() / PAGE_SIZE;
             self.inner[page_start_id..page_start_id + page_num]
-                .iter_mut()
-                .for_each(|mut bit| *bit = true);
+                // .iter_mut()
+                // .for_each(|mut bit| *bit = true);
+                .fill(true);
             if self.inner.all() {
                 self.fully_committed = true;
             }
