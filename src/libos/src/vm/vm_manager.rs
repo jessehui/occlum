@@ -56,7 +56,11 @@ impl VMManager {
     }
 
     pub fn verified_clean_when_exit(&self) -> bool {
-        let internal = self.internal();
+        let mut internal = self.internal();
+
+        // Free all fast default chunks when exit
+        internal.free_fast_default_chunks();
+
         internal.chunks.len() == 0 && internal.free_manager.free_size() == self.range.size()
     }
 
@@ -546,12 +550,22 @@ impl InternalVMManager {
 
     // Allocate a new chunk with default size
     pub fn mmap_chunk_default(&mut self, addr: VMMapAddr) -> Result<ChunkRef> {
-        // Find a free range from free_manager
-        let free_range = self.find_free_gaps(CHUNK_DEFAULT_SIZE, PAGE_SIZE, addr)?;
+        let chunk = {
+            if matches!(addr, VMMapAddr::Any) && self.fast_default_chunks.len() > 0 {
+                let default_chunk = self.fast_default_chunks.pop().unwrap();
+                default_chunk
+            } else {
+                // Find a free range from free_manager
+                // There is no need to free fast_default_chunks if find_free_gaps fails
+                let free_range = self.find_free_gaps(CHUNK_DEFAULT_SIZE, PAGE_SIZE, addr)?;
 
-        // Add this range to chunks
-        let chunk = Arc::new(Chunk::new_default_chunk(free_range)?);
-        trace!("allocate a default chunk = {:?}", chunk);
+                // Add this range to chunks
+                let chunk = Arc::new(Chunk::new_default_chunk(free_range)?);
+                trace!("allocate a default chunk = {:?}", chunk);
+                chunk
+            }
+        };
+
         self.chunks.insert(chunk.clone());
         Ok(chunk)
     }
@@ -566,11 +580,32 @@ impl InternalVMManager {
         Ok(new_chunk)
     }
 
+    fn free_fast_default_chunks(&mut self) {
+        let default_chunks = self
+            .fast_default_chunks
+            .drain(..)
+            .collect::<Vec<ChunkRef>>();
+        default_chunks.iter().for_each(|chunk| {
+            self.free_manager
+                .add_range_back_to_free_manager(chunk.range())
+                .unwrap()
+        });
+    }
+
     fn new_chunk_with_options(&mut self, options: &VMMapOptions) -> Result<ChunkRef> {
         let addr = *options.addr();
         let size = *options.size();
         let align = *options.align();
-        let free_range = self.find_free_gaps(size, align, addr)?;
+        let free_range = {
+            let free_range = self.find_free_gaps(size, align, addr);
+            if free_range.is_err() && self.fast_default_chunks.len() > 0 {
+                self.free_fast_default_chunks();
+                // Try allocate again
+                self.find_free_gaps(size, align, addr)?
+            } else {
+                free_range?
+            }
+        };
         let free_chunk = Chunk::new_single_vma_chunk(&free_range, options).map_err(|e| {
             // Error when creating chunks. Must return the free space before returning error
             self.free_manager
@@ -941,10 +976,16 @@ impl InternalVMManager {
     pub fn free_chunk(&mut self, chunk: &ChunkRef) -> Result<()> {
         let range = chunk.range();
         // Remove from chunks
-        self.chunks.remove(chunk);
+        let ret = self.chunks.remove(chunk);
+        assert!(ret == true);
 
         // Mprotect the whole chunk to reduce the usage of vma count of host
         VMPerms::apply_perms(range, VMPerms::DEFAULT);
+
+        if matches!(chunk.internal(), ChunkType::MultiVMA(_)) {
+            self.fast_default_chunks.push(chunk.clone());
+            return Ok(());
+        }
 
         // Add range back to freespace manager
         self.free_manager.add_range_back_to_free_manager(range);
