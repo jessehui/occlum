@@ -244,7 +244,7 @@ impl Chunk {
             ChunkType::SingleVMA(vma) => {
                 let mut vma = vma.lock().unwrap();
                 debug_assert!(vma.contains(pf_addr));
-                info!("lock vma = {:?}", vma);
+                warn!("lock vma = {:?}", vma);
                 return vma.handle_page_fault(rip, pf_addr, errcd, kernel_triggers);
             }
             ChunkType::MultiVMA(internal_manager) => {

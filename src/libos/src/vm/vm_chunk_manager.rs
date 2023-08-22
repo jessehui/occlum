@@ -423,7 +423,7 @@ impl ChunkManager {
         errcd: u32,
         kernel_triggers: bool,
     ) -> Result<()> {
-        info!(
+        warn!(
             "chunk manager range = {:?}, free_size = {:?}",
             self.range, self.free_size
         );

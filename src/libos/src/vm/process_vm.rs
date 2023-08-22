@@ -18,6 +18,8 @@ use util::sync::rw_lock::RwLockWriteGuard;
 // Used for heap and stack start address randomization.
 const RANGE_FOR_RANDOMIZATION: usize = 256 * 4096; // 1M
 
+const FILE_BACKED_THREASHOLD: usize = 128 * 1024;
+
 #[derive(Debug, Clone)]
 pub struct ProcessVMBuilder<'a, 'b> {
     elfs: Vec<&'b ElfFile<'a>>,
@@ -542,11 +544,12 @@ impl ProcessVM {
                 // With MAP_STACK, the mmaped memory will be used as user's stack. If not committed, the PF can occurs
                 // when switching to user space and can't be handled correctly by us.
                 PagePolicy::CommitNow
+            // } else if perms != VMPerms::DEFAULT && size < 2 * 1048576 {
+            //     PagePolicy::CommitNow
+            // } else if !flags.contains(MMapFlags::MAP_ANONYMOUS)  && size <= FILE_BACKED_THREASHOLD {
             } else if !flags.contains(MMapFlags::MAP_ANONYMOUS) {
                 // Commit Now for file-backed mmap
                 // TODO: Use Commit on demand policy in the future
-                PagePolicy::CommitNow
-            } else if perms != VMPerms::DEFAULT && size < 1 * 1048576 {
                 PagePolicy::CommitNow
             } else {
                 PagePolicy::CommitOnDemand

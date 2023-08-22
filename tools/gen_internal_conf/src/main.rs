@@ -378,7 +378,7 @@ fn main() {
                 }
                 let user_region_mem_size = if config_user_space_max_size == config_user_space_init_size {
                     // SDK still need user region to track the EMA.
-                    extra_user_region.unwrap()
+                    config_user_space_max_size
                 } else {
                     config_user_space_max_size + extra_user_region.unwrap()
                 };

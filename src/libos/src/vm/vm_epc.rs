@@ -189,14 +189,19 @@ impl UserRegionMem {
         new_perms: VMPerms,
     ) -> Result<()> {
         let ptr = NonNull::<u8>::new(start_addr as *mut u8).unwrap();
-        let data = Page::new_page_aligned_vec(size);
         let perm = Perm::from_bits(new_perms.bits()).unwrap();
         info!(
             "commit_with_data ptr = {:?}, size = {:?}, perm = {:?}, occlum_perm = {:?}",
             ptr, size, perm, new_perms
         );
-        unsafe { EmmAlloc::commit_with_data(ptr, data.as_slice(), perm) }
-            .map_err(|e| errno!(Errno::from(e as u32)))?;
+        if size == PAGE_SIZE {
+            unsafe { EmmAlloc::commit_with_data(ptr, ZERO_PAGES.as_slice(), perm) }
+                .map_err(|e| errno!(Errno::from(e as u32)))?;
+        } else {
+            let data = Page::new_page_aligned_vec(size);
+            unsafe { EmmAlloc::commit_with_data(ptr, data.as_slice(), perm) }
+                .map_err(|e| errno!(Errno::from(e as u32)))?;
+        }
         Ok(())
     }
 
