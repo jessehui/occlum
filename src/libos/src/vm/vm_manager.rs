@@ -61,7 +61,14 @@ impl VMManager {
         // Free all fast default chunks when exit
         internal.free_fast_default_chunks();
 
-        internal.chunks.len() == 0 && internal.free_manager.free_size() == self.range.size()
+        assert!(internal.chunks.len() == 0);
+        info!("internal free manager = {:?}", internal.free_manager);
+        info!(
+            "free manager size = {:?}, internal range size = {:?}",
+            internal.free_manager.free_size(),
+            self.range.size()
+        );
+        internal.free_manager.free_size() == self.range.size()
     }
 
     pub fn free_chunk(&self, chunk: &ChunkRef) {
@@ -586,6 +593,7 @@ impl InternalVMManager {
             .drain(..)
             .collect::<Vec<ChunkRef>>();
         default_chunks.iter().for_each(|chunk| {
+            info!("free_fast_default_chunks default chunks = {:?}", chunk);
             self.free_manager
                 .add_range_back_to_free_manager(chunk.range())
                 .unwrap()
