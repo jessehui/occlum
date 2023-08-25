@@ -52,6 +52,7 @@ impl VMFreeSpaceManager {
                 }
                 free_range.clone()
             };
+            info!("free range = {:?}", free_range);
 
             match addr {
                 // Want a minimal free_range
@@ -93,8 +94,16 @@ impl VMFreeSpaceManager {
                 }
             }
 
+            let start = align_up(free_range.start(), align);
+            let end = start + size;
+            if end > free_range.end() {
+                continue;
+            }
+            free_range = VMRange { start, end };
+
             result_free_range = Some(free_range);
             result_idx = Some(idx);
+            info!("result_free_range = {:?}", result_free_range);
             break;
         }
 
@@ -103,12 +112,7 @@ impl VMFreeSpaceManager {
         }
 
         let index = result_idx.unwrap();
-        let result_free_range = {
-            let free_range = result_free_range.unwrap();
-            let start = align_up(free_range.start(), align);
-            let end = start + size;
-            VMRange { start, end }
-        };
+        let result_free_range = result_free_range.unwrap();
 
         self.free_list_update_range(index, result_free_range);
         trace!("after find free range, free list = {:?}", self.free_manager);
