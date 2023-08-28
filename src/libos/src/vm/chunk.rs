@@ -13,7 +13,7 @@ use std::hash::{Hash, Hasher};
 // For single VMA chunk, the vma struct doesn't need to update the pid field. Because all the chunks are recorded by the process VM already.
 pub const DUMMY_CHUNK_PROCESS_ID: pid_t = 0;
 // Default chunk size: 32MB
-pub const CHUNK_DEFAULT_SIZE: usize = 32 * 1024 * 1024;
+pub const CHUNK_DEFAULT_SIZE: usize = 32 * 1024;
 
 pub type ChunkID = usize;
 pub type ChunkRef = Arc<Chunk>;
@@ -258,7 +258,7 @@ pub enum ChunkType {
 #[derive(Debug)]
 pub struct ChunkInternal {
     chunk_manager: ChunkManager,
-    process_set: HashSet<pid_t>,
+    pub process_set: HashSet<pid_t>,
 }
 
 const PROCESS_SET_INIT_SIZE: usize = 5;

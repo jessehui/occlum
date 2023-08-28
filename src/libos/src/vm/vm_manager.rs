@@ -526,6 +526,14 @@ impl InternalVMManager {
         let chunk = {
             if matches!(addr, VMMapAddr::Any) && self.fast_default_chunks.len() > 0 {
                 let default_chunk = self.fast_default_chunks.pop().unwrap();
+                match default_chunk.internal() {
+                    ChunkType::MultiVMA(manager) => {
+                        let internal = manager.lock().unwrap();
+                        assert!(internal.chunk_manager().is_empty());
+                        assert!(internal.process_set.len() == 0);
+                    }
+                    _ => unreachable!(),
+                }
                 default_chunk
             } else {
                 // Find a free range from free_manager
@@ -819,10 +827,10 @@ impl InternalVMManager {
         // Mprotect the whole chunk to reduce the usage of vma count of host
         VMPerms::apply_perms(range, VMPerms::DEFAULT);
 
-        if matches!(chunk.internal(), ChunkType::MultiVMA(_)) {
-            self.fast_default_chunks.push(chunk.clone());
-            return Ok(());
-        }
+        // if matches!(chunk.internal(), ChunkType::MultiVMA(_)) {
+        //     self.fast_default_chunks.push(chunk.clone());
+        //     return Ok(());
+        // }
 
         // Add range back to freespace manager
         self.free_manager.add_range_back_to_free_manager(range);
