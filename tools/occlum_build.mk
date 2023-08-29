@@ -90,7 +90,7 @@ $(instance_dir)/build/lib:
 	@mkdir -p build/lib
 
 $(INITFS_IMAGE_MAC):
-$(INITFS_IMAGE): $(INITFS) $(INITFS_DIRS) $(INITFS_FILES) $(IMAGE_CONFIG_JSON) $(SEFS_CLI_SIM) $(SIGNED_SEFS_CLI_LIB)
+$(INITFS_IMAGE): $(INITFS) $(INITFS_DIRS) $(INITFS_FILES) $(IMAGE_CONFIG_JSON)
 	@echo "Building the initfs..."
 	@rm -rf build/initfs
 	@mkdir -p build/initfs
@@ -114,7 +114,7 @@ $(IMAGE_CONFIG_JSON):
 # If image dir not exist, just use the secure Occlum FS image
 ifneq ($(wildcard $(IMAGE)/. ),)
 $(SECURE_IMAGE_MAC):
-$(SECURE_IMAGE): $(IMAGE) $(IMAGE_DIRS) $(IMAGE_FILES) $(SEFS_CLI_SIM) $(SIGNED_SEFS_CLI_LIB)
+$(SECURE_IMAGE): $(IMAGE) $(IMAGE_DIRS) $(IMAGE_FILES)
 	@echo "Building new image..."
 	@rm -rf build/mount
 	@mkdir -p build/mount/

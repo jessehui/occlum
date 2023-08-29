@@ -822,11 +822,7 @@ impl VMArea {
             self.pages = None;
         }
 
-        // if self.pf_count > 2 && total_commit_size <= COMMIT_SIZE_UNIT {
-        //     self.pf_count = u64::MAX;
-        // }
-
-        if self.pf_count > 1 {
+        if self.pf_count >= 2 {
             self.pf_count = u64::MAX;
         }
 
