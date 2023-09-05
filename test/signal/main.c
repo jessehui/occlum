@@ -213,15 +213,27 @@ static int killed_child() {
 // Test catching and handling hardware exception
 // ============================================================================
 
+#define fxsave(addr) __asm __volatile("fxsave %0" : "=m" (*(addr)))
+
 static void handle_sigfpe(int num, siginfo_t *info, void *_context) {
     printf("SIGFPE Caught\n");
     assert(num == SIGFPE);
     assert(info->si_signo == SIGFPE);
+    char x[512] __attribute__((aligned(16))) = {};
+    char y[512] __attribute__((aligned(16))) = {};
 
     ucontext_t *ucontext = _context;
     mcontext_t *mcontext = &ucontext->uc_mcontext;
     // The faulty instruction should be `idiv %esi` (f7 fe)
     mcontext->gregs[REG_RIP] += 2;
+    fxsave(x);
+    float a = 3.00001234567890123 / 2;
+    printf("a = %f\n", a);
+    fxsave(y);
+    if (memcmp(x, y, 512) == 0) {
+        printf("floating point registers is not modified\n");
+        abort();
+    }
 
     return;
 }
@@ -232,8 +244,6 @@ static void handle_sigfpe(int num, siginfo_t *info, void *_context) {
 int div_maybe_zero(int x, int y) {
     return x / y;
 }
-
-#define fxsave(addr) __asm __volatile("fxsave %0" : "=m" (*(addr)))
 
 int test_handle_sigfpe() {
     // Set up a signal handler that handles divide-by-zero exception

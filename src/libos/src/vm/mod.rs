@@ -63,11 +63,13 @@ use std::fmt;
 
 mod chunk;
 mod free_space_manager;
+mod page_tracker;
 mod process_vm;
 mod shm_manager;
 mod user_space_vm;
 mod vm_area;
 mod vm_chunk_manager;
+mod vm_epc;
 mod vm_layout;
 mod vm_manager;
 mod vm_perms;
@@ -77,9 +79,12 @@ mod vm_util;
 use self::vm_layout::VMLayout;
 
 pub use self::chunk::{ChunkRef, ChunkType};
-pub use self::process_vm::{MMapFlags, MRemapFlags, MSyncFlags, ProcessVM, ProcessVMBuilder};
+pub use self::process_vm::{
+    MMapFlags, MRemapFlags, MSyncFlags, MadviceFlags, ProcessVM, ProcessVMBuilder,
+};
 pub use self::user_space_vm::USER_SPACE_VM_MANAGER;
 pub use self::vm_area::VMArea;
+pub use self::vm_epc::enclave_page_fault_handler;
 pub use self::vm_perms::VMPerms;
 pub use self::vm_range::VMRange;
 pub use self::vm_util::{VMInitializer, VMMapOptionsBuilder};
@@ -93,12 +98,12 @@ pub fn do_mmap(
     offset: usize,
 ) -> Result<usize> {
     if flags.contains(MMapFlags::MAP_ANONYMOUS) {
-        debug!(
+        warn!(
             "mmap: addr: {:#x}, size: {:#x}, perms: {:?}, flags: {:?}",
             addr, size, perms, flags,
         );
     } else {
-        debug!(
+        warn!(
             "mmap: addr: {:#x}, size: {:#x}, perms: {:?}, flags: {:?}, fd: {:?}, offset: {:?}",
             addr, size, perms, flags, fd, offset
         );
@@ -108,7 +113,7 @@ pub fn do_mmap(
 }
 
 pub fn do_munmap(addr: usize, size: usize) -> Result<()> {
-    debug!("munmap: addr: {:#x}, size: {:#x}", addr, size);
+    warn!("munmap: addr: {:#x}, size: {:#x}", addr, size);
     let current = current!();
     current!().vm().munmap(addr, size)
 }
@@ -151,6 +156,11 @@ pub fn do_msync(addr: usize, size: usize, flags: MSyncFlags) -> Result<()> {
         warn!("not support MS_ASYNC");
     }
     current!().vm().msync(addr, size)
+}
+
+pub fn do_madvice(addr: usize, length: usize, advice: MadviceFlags) -> Result<()> {
+    warn!("madvice flags = {:?}", advice);
+    Ok(())
 }
 
 pub const PAGE_SIZE: usize = 4096;
