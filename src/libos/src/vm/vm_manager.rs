@@ -994,9 +994,6 @@ impl InternalVMManager {
         // Remove from chunks
         self.chunks.remove(chunk);
 
-        // TODO: Mprotect the whole chunk to reduce the usage of vma count of host
-        // VMPerms::apply_perms(range, VMPerms::DEFAULT);
-
         // Add range back to freespace manager
         self.free_manager.add_range_back_to_free_manager(range);
         Ok(())

@@ -10,7 +10,7 @@ use vm_epc::SGXPlatform;
 use vm_manager::VMManager;
 use vm_perms::VMPerms;
 
-const RSRV_MEM_PERM: VMPerms = VMPerms::DEFAULT;
+const USER_SPACE_DEFAULT_MEM_PERM: VMPerms = VMPerms::DEFAULT;
 
 /// The virtual memory manager for the entire user space
 pub struct UserSpaceVMManager {
@@ -31,8 +31,13 @@ impl UserSpaceVMManager {
             userspace_vm_range, gap_range
         );
 
-        // FIXME
-        // pku_util::pkey_mprotect_userspace_mem(addr, user_space_mem_size, RSRV_MEM_PERM.bits());
+        // Use pkey_mprotect to set the whole userspace to R/W permissions. If user specifies a new
+        // permission, the mprotect ocall will update the permission.
+        pku_util::pkey_mprotect_userspace_mem(
+            &userspace_vm_range,
+            gap_range.as_ref(),
+            USER_SPACE_DEFAULT_MEM_PERM,
+        );
 
         let vm_manager = VMManager::init(userspace_vm_range, gap_range)?;
 
@@ -54,15 +59,19 @@ fn free_user_space() {
     info!("free user space at the end");
     SYSTEM_V_SHM_MANAGER.clean_when_libos_exit();
     let total_user_space_range = USER_SPACE_VM_MANAGER.range();
+    let gap_range = USER_SPACE_VM_MANAGER.gap_range();
     assert!(USER_SPACE_VM_MANAGER.verified_clean_when_exit());
     let addr = total_user_space_range.start();
     let size = total_user_space_range.size();
     info!("free user space VM: {:?}", total_user_space_range);
 
     // FIXME
-    // pku_util::clear_pku_when_libos_exit(addr, size, RSRV_MEM_PERM.bits());
+    pku_util::clear_pku_when_libos_exit(
+        total_user_space_range,
+        gap_range.as_ref(),
+        USER_SPACE_DEFAULT_MEM_PERM,
+    );
 
-    let gap_range = USER_SPACE_VM_MANAGER.gap_range();
     USER_SPACE_VM_MANAGER
         .sgx_platform
         .free_user_space(total_user_space_range, gap_range.as_ref());
