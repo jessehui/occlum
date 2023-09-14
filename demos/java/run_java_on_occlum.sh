@@ -6,7 +6,7 @@ NC='\033[0m'
 
 show_usage() {
     echo "Error: invalid arguments"
-    echo "Usage: $0 web_app/hello/processBuilder"
+    echo "Usage: $0 web_app/hello/processBuilder/hello_pku"
     exit 1
 }
 
@@ -24,13 +24,19 @@ init_instance() {
     rm -rf occlum_instance && mkdir occlum_instance
     cd occlum_instance
     occlum init
-    new_json="$(jq '.resource_limits.user_space_size = "1680MB" |
-                .resource_limits.kernel_space_heap_size="64MB" |
+    new_json="$(jq '.resource_limits.user_space_size = "1MB" |
+                .resource_limits.user_space_max_size = "1680MB" |
+                .resource_limits.kernel_space_heap_size="1MB" |
+                .resource_limits.kernel_space_heap_max_size="64MB" |
                 .resource_limits.max_num_of_threads = 64 |
                 .process.default_heap_size = "256MB" |
                 .entry_points = [ "/usr/lib/jvm/java-11-alibaba-dragonwell/jre/bin" ] |
                 .env.default = [ "LD_LIBRARY_PATH=/usr/lib/jvm/java-11-alibaba-dragonwell/jre/lib/server:/usr/lib/jvm/java-11-alibaba-dragonwell/jre/lib:/usr/lib/jvm/java-11-alibaba-dragonwell/jre/../lib" ]' Occlum.json)" && \
     echo "${new_json}" > Occlum.json
+}
+
+update_pku_config() {
+    new_json="$(jq '.metadata.pkru = 1' Occlum.json)" && echo "${new_json}" > Occlum.json
 }
 
 build_web() {
@@ -66,12 +72,23 @@ run_hello() {
     occlum run /usr/lib/jvm/java-11-alibaba-dragonwell/jre/bin/java -Xmx512m -XX:-UseCompressedOops -XX:MaxMetaspaceSize=64m -Dos.name=Linux Main
 }
 
+run_hello_pku() {
+    hello=./hello_world/Main.class
+    check_file_exist ${hello}
+    init_instance
+    update_pku_config
+    build_hello
+    echo -e "${BLUE}occlum run JVM hello with PKU enabled${NC}"
+    occlum run /usr/lib/jvm/java-11-alibaba-dragonwell/jre/bin/java -Xmx512m -XX:-UseCompressedOops -XX:MaxMetaspaceSize=64m -Dos.name=Linux Main
+}
+
 build_processBuilder() {
     # Copy JVM and class file into Occlum instance and build
     rm -rf image
     copy_bom -f ../process_builder.yaml --root image --include-dir /opt/occlum/etc/template
     # Need bigger user space size for multiprocess
-    new_json="$(jq '.resource_limits.user_space_size = "6000MB"' Occlum.json)" && \
+    new_json="$(jq '.resource_limits.user_space_size = "1MB" |
+                    .resource_limits.user_space_max_size = "6000MB"' Occlum.json)" && \
     echo "${new_json}" > Occlum.json
     occlum build
 }
@@ -96,6 +113,9 @@ case "$arg" in
         ;;
     processBuilder)
         run_processBuilder
+        ;;
+    hello_pku)
+        run_hello_pku
         ;;
     *)
         show_usage
