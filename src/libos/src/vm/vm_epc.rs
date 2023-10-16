@@ -69,7 +69,12 @@ pub trait EPCAllocator {
         return_errno!(ENOSYS, "operation not supported");
     }
 
-    fn modify_protection(addr: usize, length: usize, protection: VMPerms) -> Result<()> {
+    fn modify_protection(
+        addr: usize,
+        length: usize,
+        current_protection: VMPerms,
+        new_protection: VMPerms,
+    ) -> Result<()> {
         return_errno!(ENOSYS, "operation not supported");
     }
 
@@ -99,11 +104,16 @@ impl EPCAllocator for ReservedMem {
         Ok(())
     }
 
-    fn modify_protection(addr: usize, length: usize, protection: VMPerms) -> Result<()> {
+    fn modify_protection(
+        addr: usize,
+        length: usize,
+        current_protection: VMPerms,
+        new_protection: VMPerms,
+    ) -> Result<()> {
         let mut ret_val = 0;
         let ret = if rsgx_is_supported_EDMM() {
             unsafe {
-                sgx_tprotect_rsrv_mem(addr as *const c_void, length, protection.bits() as i32)
+                sgx_tprotect_rsrv_mem(addr as *const c_void, length, new_protection.bits() as i32)
             }
         } else {
             // For platforms without EDMM, sgx_tprotect_rsrv_mem is actually useless.
@@ -113,12 +123,13 @@ impl EPCAllocator for ReservedMem {
                     &mut ret_val as *mut i32,
                     addr as *const c_void,
                     length,
-                    protection.bits() as i32,
+                    new_protection.bits() as i32,
                 )
             }
         };
 
         if ret != sgx_status_t::SGX_SUCCESS || ret_val != 0 {
+            error!("ocall ret = {:?}, ret_val = {:?}", ret, ret_val);
             return_errno!(ENOMEM, "reserved memory modify protection failure");
         }
 
@@ -147,17 +158,34 @@ impl EPCAllocator for UserRegionMem {
         Ok(())
     }
 
-    fn modify_protection(addr: usize, length: usize, protection: VMPerms) -> Result<()> {
+    fn modify_protection(
+        addr: usize,
+        length: usize,
+        current_protection: VMPerms,
+        new_protection: VMPerms,
+    ) -> Result<()> {
         trace!(
             "user region modify protection, protection = {:?}, range = {:?}",
-            protection,
+            new_protection,
             VMRange::new_with_size(addr, length).unwrap()
         );
-        let ptr = NonNull::<u8>::new(addr as *mut u8).unwrap();
-        unsafe {
-            EmmAlloc.modify_permissions(ptr, length, Perm::from_bits(protection.bits()).unwrap())
+        #[cfg(feature = "sim_mode")]
+        {
+            let ptr = NonNull::<u8>::new(addr as *mut u8).unwrap();
+            unsafe {
+                EmmAlloc.modify_permissions(
+                    ptr,
+                    length,
+                    Perm::from_bits(new_protection.bits()).unwrap(),
+                )
+            }
+            .map_err(|e| errno!(Errno::from(e as u32)))?;
         }
-        .map_err(|e| errno!(Errno::from(e as u32)))?;
+
+        #[cfg(not(feature = "sim_mode"))]
+        {
+            EDMMLocalApi::modify_permissions(addr, length, current_protection, new_protection)?;
+        }
 
         Ok(())
     }
@@ -328,15 +356,28 @@ impl EPCMemType {
         }
     }
 
-    pub fn modify_protection(&self, addr: usize, length: usize, protection: VMPerms) -> Result<()> {
+    pub fn modify_protection(
+        &self,
+        addr: usize,
+        length: usize,
+        current_protection: VMPerms,
+        new_protection: VMPerms,
+    ) -> Result<()> {
         // PT_GROWSDOWN should only be applied to stack segment or a segment mapped with the MAP_GROWSDOWN flag set.
         // Since the memory are managed by our own, mprotect ocall shouldn't use this flag. Otherwise, EINVAL will be thrown.
-        let mut prot = protection.clone();
+        let mut prot = new_protection.clone();
         prot.remove(VMPerms::GROWSDOWN);
 
+        let mut current_prot = current_protection.clone();
+        current_prot.remove(VMPerms::GROWSDOWN);
+
         match self {
-            EPCMemType::Reserved => ReservedMem::modify_protection(addr, length, prot),
-            EPCMemType::UserRegion => UserRegionMem::modify_protection(addr, length, prot),
+            EPCMemType::Reserved => {
+                ReservedMem::modify_protection(addr, length, current_prot, prot)
+            }
+            EPCMemType::UserRegion => {
+                UserRegionMem::modify_protection(addr, length, current_prot, prot)
+            }
         }
     }
 }
@@ -402,4 +443,98 @@ extern "C" {
         len: usize,
         prot: i32,
     ) -> sgx_status_t;
+
+    fn sgx_mm_modify_ocall(addr: usize, size: usize, flags_from: i32, flags_to: i32) -> i32;
+
+    //  // EACCEPT
+    //  int do_eaccept(const sec_info_t* si, size_t addr);
+    fn do_eaccept(si: *const sec_info_t, addr: usize) -> i32;
+
+    //  // EMODPE
+    //  int do_emodpe(const sec_info_t* si, size_t addr);
+    fn do_emodpe(si: *const sec_info_t, addr: usize) -> i32;
+
+    //  // EACCEPTCOPY
+    //  int do_eacceptcopy(const sec_info_t* si, size_t dest, size_t src);
+    fn do_eacceptcopy(si: *const sec_info_t, addr: usize) -> i32;
+}
+
+// struct _sec_info_t
+//     {
+//         uint64_t flags;
+//         uint64_t reserved[7];
+//     } sec_info_t;
+
+#[allow(non_camel_case_types)]
+#[repr(C, align(512))]
+struct sec_info_t {
+    flags: u64,
+    reserved: [u64; 7],
+}
+
+// permission restriction state
+const SGX_EMA_STATE_PR: u64 = 0x20;
+impl sec_info_t {
+    fn new(new_protection: VMPerms) -> Self {
+        Self {
+            flags: ((new_protection.bits() | SGX_EMA_PAGE_TYPE_REG) as u64) | SGX_EMA_STATE_PR,
+            reserved: [0; 7],
+        }
+    }
+}
+
+#[cfg(not(feature = "sim_mode"))]
+struct EDMMLocalApi;
+
+#[cfg(not(feature = "sim_mode"))]
+impl EDMMLocalApi {
+    fn modify_permissions(
+        addr: usize,
+        length: usize,
+        current_protection: VMPerms,
+        new_protection: VMPerms,
+    ) -> Result<()> {
+        let flags_from = current_protection.bits() | SGX_EMA_PAGE_TYPE_REG;
+        let flags_to = new_protection.bits() | SGX_EMA_PAGE_TYPE_REG;
+        let ret = unsafe { sgx_mm_modify_ocall(addr, length, flags_from as i32, flags_to as i32) };
+        if ret != 0 {
+            panic!("ret = {}", ret);
+        }
+
+        let si = sec_info_t::new(new_protection);
+        let mut page = addr;
+        while page < addr + length {
+            assert!(page % PAGE_SIZE == 0);
+
+            if new_protection.bits() | current_protection.bits() != current_protection.bits() {
+                let ret = unsafe { do_emodpe(&si as *const sec_info_t, page) };
+                // Check this return value is useless. RAX is set to SE_EMODPE which is 6 defined in SDK.
+                info!("do_emodpe ret = {:?}", ret);
+            }
+            // If new permission is RWX, no EMODPR needed in untrusted part, hence no EACCEPT
+            if new_protection != VMPerms::ALL {
+                let ret = unsafe { do_eaccept(&si, page) };
+                if ret != 0 {
+                    panic!();
+                }
+            }
+            page += PAGE_SIZE;
+        }
+
+        if new_protection == VMPerms::NONE {
+            let ret = unsafe {
+                sgx_mm_modify_ocall(
+                    addr,
+                    length,
+                    (SGX_EMA_PAGE_TYPE_REG | SGX_EMA_PROT_NONE) as i32,
+                    (SGX_EMA_PAGE_TYPE_REG | SGX_EMA_PROT_NONE) as i32,
+                )
+            };
+            if ret != 0 {
+                panic!();
+            }
+        }
+
+        Ok(())
+    }
 }
