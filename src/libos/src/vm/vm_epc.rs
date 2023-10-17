@@ -27,6 +27,7 @@ pub enum EPCMemType {
 }
 
 pub struct ReservedMem;
+
 pub struct UserRegionMem;
 
 #[repr(C, align(4096))]
@@ -169,23 +170,14 @@ impl EPCAllocator for UserRegionMem {
             new_protection,
             VMRange::new_with_size(addr, length).unwrap()
         );
-        #[cfg(feature = "sim_mode")]
-        {
-            let ptr = NonNull::<u8>::new(addr as *mut u8).unwrap();
-            unsafe {
-                EmmAlloc.modify_permissions(
-                    ptr,
-                    length,
-                    Perm::from_bits(new_protection.bits()).unwrap(),
-                )
-            }
-            .map_err(|e| errno!(Errno::from(e as u32)))?;
-        }
 
         #[cfg(not(feature = "sim_mode"))]
         {
             EDMMLocalApi::modify_permissions(addr, length, current_protection, new_protection)?;
         }
+
+        #[cfg(feature = "sim_mode")]
+        unreachable!();
 
         Ok(())
     }
@@ -197,8 +189,13 @@ impl EPCAllocator for UserRegionMem {
 
 impl UserRegionMem {
     fn commit_memory(start_addr: usize, size: usize) -> Result<()> {
-        let ptr = NonNull::<u8>::new(start_addr as *mut u8).unwrap();
-        unsafe { EmmAlloc.commit(ptr, size) }.map_err(|e| errno!(Errno::from(e as u32)))?;
+        #[cfg(not(feature = "sim_mode"))]
+        {
+            EDMMLocalApi::commit_memory(start_addr, size)?;
+        }
+
+        #[cfg(feature = "sim_mode")]
+        unreachable!();
         Ok(())
     }
 
@@ -207,16 +204,32 @@ impl UserRegionMem {
         size: usize,
         new_perms: VMPerms,
     ) -> Result<()> {
-        let ptr = NonNull::<u8>::new(start_addr as *mut u8).unwrap();
-        let perm = Perm::from_bits(new_perms.bits()).unwrap();
-        if size == PAGE_SIZE {
-            unsafe { EmmAlloc::commit_with_data(ptr, ZERO_PAGE.as_slice(), perm) }
-                .map_err(|e| errno!(Errno::from(e as u32)))?;
-        } else {
-            let data = ZeroPage::new_page_aligned_vec(size);
-            unsafe { EmmAlloc::commit_with_data(ptr, data.as_slice(), perm) }
-                .map_err(|e| errno!(Errno::from(e as u32)))?;
+        // {
+        //     let ptr = NonNull::<u8>::new(start_addr as *mut u8).unwrap();
+        //     let perm = Perm::from_bits(new_perms.bits()).unwrap();
+        //     if size == PAGE_SIZE {
+        //         unsafe { EmmAlloc::commit_with_data(ptr, ZERO_PAGE.as_slice(), perm) }
+        //             .map_err(|e| errno!(Errno::from(e as u32)))?;
+        //     } else {
+        //         let data = ZeroPage::new_page_aligned_vec(size);
+        //         unsafe { EmmAlloc::commit_with_data(ptr, data.as_slice(), perm) }
+        //             .map_err(|e| errno!(Errno::from(e as u32)))?;
+        //     }
+        // }
+
+        #[cfg(not(feature = "sim_mode"))]
+        {
+            if size == PAGE_SIZE {
+                EDMMLocalApi::commit_with_data(start_addr, ZERO_PAGE.as_slice(), new_perms)?;
+            } else {
+                let data = ZeroPage::new_page_aligned_vec(size);
+                EDMMLocalApi::commit_with_data(start_addr, data.as_slice(), new_perms)?;
+            }
         }
+
+        #[cfg(feature = "sim_mode")]
+        unreachable!();
+
         Ok(())
     }
 
@@ -227,16 +240,29 @@ impl UserRegionMem {
         file_offset: usize,
         new_perms: VMPerms,
     ) -> Result<()> {
-        let mut data = ZeroPage::new_page_aligned_vec(size);
-        let len = file
-            .read_at(file_offset, data.as_mut_slice())
-            .map_err(|_| errno!(EACCES, "failed to init memory from file"))?;
+        // let mut data = ZeroPage::new_page_aligned_vec(size);
+        // let len = file
+        //     .read_at(file_offset, data.as_mut_slice())
+        //     .map_err(|_| errno!(EACCES, "failed to init memory from file"))?;
 
-        let ptr = NonNull::<u8>::new(start_addr as *mut u8).unwrap();
-        let perm = Perm::from_bits(new_perms.bits()).unwrap();
+        // let ptr = NonNull::<u8>::new(start_addr as *mut u8).unwrap();
+        // let perm = Perm::from_bits(new_perms.bits()).unwrap();
 
-        unsafe { EmmAlloc::commit_with_data(ptr, data.as_slice(), perm) }
-            .map_err(|e| errno!(Errno::from(e as u32)))?;
+        // unsafe { EmmAlloc::commit_with_data(ptr, data.as_slice(), perm) }
+        //     .map_err(|e| errno!(Errno::from(e as u32)))?;
+        #[cfg(not(feature = "sim_mode"))]
+        {
+            let mut data = ZeroPage::new_page_aligned_vec(size);
+            let len = file
+                .read_at(file_offset, data.as_mut_slice())
+                .map_err(|_| errno!(EACCES, "failed to init memory from file"))?;
+
+            EDMMLocalApi::commit_with_data(start_addr, data.as_slice(), new_perms)?;
+        }
+
+        #[cfg(feature = "sim_mode")]
+        unreachable!();
+
         Ok(())
     }
 }
@@ -456,14 +482,8 @@ extern "C" {
 
     //  // EACCEPTCOPY
     //  int do_eacceptcopy(const sec_info_t* si, size_t dest, size_t src);
-    fn do_eacceptcopy(si: *const sec_info_t, addr: usize) -> i32;
+    fn do_eacceptcopy(si: *const sec_info_t, dest: usize, src: usize) -> i32;
 }
-
-// struct _sec_info_t
-//     {
-//         uint64_t flags;
-//         uint64_t reserved[7];
-//     } sec_info_t;
 
 #[allow(non_camel_case_types)]
 #[repr(C, align(512))]
@@ -472,12 +492,29 @@ struct sec_info_t {
     reserved: [u64; 7],
 }
 
-// permission restriction state
-const SGX_EMA_STATE_PR: u64 = 0x20;
 impl sec_info_t {
-    fn new(new_protection: VMPerms) -> Self {
+    const SGX_EMA_STATE_PENDING: u64 = 0x08; // pending state
+    const SGX_EMA_STATE_PR: u64 = 0x20; // permission restriction state
+
+    fn new_for_modify_permission(new_protection: &VMPerms) -> Self {
         Self {
-            flags: ((new_protection.bits() | SGX_EMA_PAGE_TYPE_REG) as u64) | SGX_EMA_STATE_PR,
+            flags: ((new_protection.bits() | SGX_EMA_PAGE_TYPE_REG) as u64)
+                | Self::SGX_EMA_STATE_PR,
+            reserved: [0; 7],
+        }
+    }
+
+    fn new_for_commit_memory() -> Self {
+        Self {
+            flags: ((VMPerms::DEFAULT.bits() | SGX_EMA_PAGE_TYPE_REG) as u64)
+                | Self::SGX_EMA_STATE_PENDING,
+            reserved: [0; 7],
+        }
+    }
+
+    fn new_for_commit_with_data(protection: &VMPerms) -> Self {
+        Self {
+            flags: (protection.bits() | SGX_EMA_PAGE_TYPE_REG) as u64,
             reserved: [0; 7],
         }
     }
@@ -488,12 +525,52 @@ struct EDMMLocalApi;
 
 #[cfg(not(feature = "sim_mode"))]
 impl EDMMLocalApi {
+    fn commit_memory(start_addr: usize, size: usize) -> Result<()> {
+        let si = sec_info_t::new_for_commit_memory();
+        let mut page = start_addr;
+        while page < start_addr + size {
+            info!("do_eaccept");
+            let ret = unsafe { do_eaccept(&si as *const sec_info_t, page) };
+            if ret != 0 {
+                panic!("ret = {}", ret);
+            }
+
+            page += PAGE_SIZE;
+        }
+        Ok(())
+    }
+
+    fn commit_with_data(addr: usize, data: &[u8], perm: VMPerms) -> Result<()> {
+        let si = sec_info_t::new_for_commit_with_data(&perm);
+        let size = data.len();
+        let mut dest_page = addr;
+        let mut src_raw_ptr = data.as_ptr() as usize;
+        while dest_page < addr + size {
+            info!("do_eacceptcopy");
+            let ret = unsafe { do_eacceptcopy(&si as *const sec_info_t, dest_page, src_raw_ptr) };
+            if ret != 0 {
+                panic!("ret = {}", ret);
+            }
+
+            Self::modify_permissions(dest_page, PAGE_SIZE, VMPerms::DEFAULT, perm)?;
+
+            dest_page += PAGE_SIZE;
+            src_raw_ptr += PAGE_SIZE;
+        }
+
+        Ok(())
+    }
+
     fn modify_permissions(
         addr: usize,
         length: usize,
         current_protection: VMPerms,
         new_protection: VMPerms,
     ) -> Result<()> {
+        if current_protection == new_protection {
+            return Ok(());
+        }
+
         let flags_from = current_protection.bits() | SGX_EMA_PAGE_TYPE_REG;
         let flags_to = new_protection.bits() | SGX_EMA_PAGE_TYPE_REG;
         let ret = unsafe { sgx_mm_modify_ocall(addr, length, flags_from as i32, flags_to as i32) };
@@ -501,7 +578,7 @@ impl EDMMLocalApi {
             panic!("ret = {}", ret);
         }
 
-        let si = sec_info_t::new(new_protection);
+        let si = sec_info_t::new_for_modify_permission(&new_protection);
         let mut page = addr;
         while page < addr + length {
             assert!(page % PAGE_SIZE == 0);

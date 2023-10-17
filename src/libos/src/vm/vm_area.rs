@@ -749,8 +749,6 @@ impl VMArea {
                 range.resize(commit_once_size - total_commit_size);
             }
 
-            // We don't take care the file-backed memory here
-            debug_assert!(self.backed_file().is_none());
             self.init_memory_internal(&range, None)?;
 
             total_commit_size += range.size();
@@ -770,7 +768,7 @@ impl VMArea {
     // Only used to handle PF triggered by the kernel
     fn commit_current_vma_whole(&mut self) -> Result<()> {
         debug_assert!(!self.is_fully_committed());
-        debug_assert!(self.backed_file().is_none());
+        // debug_assert!(self.backed_file().is_none());
 
         let mut uncommitted_ranges = self.pages.as_ref().unwrap().get_ranges(false);
         for range in uncommitted_ranges {
