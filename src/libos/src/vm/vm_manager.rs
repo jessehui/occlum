@@ -552,8 +552,42 @@ impl VMManager {
             }
         };
 
+        // if let Some(page_fault_chunk) = page_fault_chunk {
+        //     return page_fault_chunk.handle_page_fault(rip, pf_addr, errcd, kernel_triggers);
+        // }
+
         if let Some(page_fault_chunk) = page_fault_chunk {
-            return page_fault_chunk.handle_page_fault(rip, pf_addr, errcd, kernel_triggers);
+            let ret = page_fault_chunk.try_handle_page_fault(rip, pf_addr, errcd, kernel_triggers);
+            if ret.is_ok() {
+                return ret;
+            }
+            if let Err(error) = &ret {
+                if error.errno() == EAGAIN {
+                    let current_process_mem_chunks = current.vm().mem_chunks().read().unwrap();
+                    for chunk in current_process_mem_chunks.iter() {
+                        match chunk.internal() {
+                            ChunkType::MultiVMA(manager) => {
+                                let mut manager = manager.try_lock();
+                                if let Ok(mut manager) = manager {
+                                    manager.chunk_manager_mut().try_commit_vma();
+                                    return Ok(());
+                                }
+                            }
+                            ChunkType::SingleVMA(vma) => {
+                                let mut vma = vma.try_lock();
+                                if let Ok(mut vma) = vma {
+                                    if vma.suitable_to_commit_during_wait() {
+                                        return vma.commit_current_vma_during_waiting();
+                                    }
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                } else {
+                    return ret;
+                }
+            }
         }
 
         // System V SHM segments are not tracked by the process VM. Try find the chunk here.

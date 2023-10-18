@@ -5,6 +5,7 @@ use sgx_trts::emm::{
 };
 use sgx_trts::enclave::rsgx_is_supported_EDMM;
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // Memory Layout for Platforms with EDMM support
 //
@@ -14,6 +15,8 @@ use std::ptr::NonNull;
 //    (commit memory when loading the enclave)       (used by SDK)           (commit on demand when PF occurs)
 //
 // For platforms without EDMM support, we only use reserved memory.
+
+static COMMIT_TIME_TOTAL: AtomicUsize = AtomicUsize::new(0); // in us
 
 pub enum SGXPlatform {
     WithEDMM,
@@ -187,15 +190,30 @@ impl EPCAllocator for UserRegionMem {
     }
 }
 
+use crate::time;
+
 impl UserRegionMem {
     fn commit_memory(start_addr: usize, size: usize) -> Result<()> {
+        // let real_start = time::do_gettimeofday().as_duration();
         #[cfg(not(feature = "sim_mode"))]
         {
             EDMMLocalApi::commit_memory(start_addr, size)?;
+
+            // let ptr = NonNull::<u8>::new(start_addr as *mut u8).unwrap();
+            // unsafe { EmmAlloc.commit(ptr, size) }.map_err(|e| errno!(Errno::from(e as u32)))?;
         }
 
         #[cfg(feature = "sim_mode")]
         unreachable!();
+        // let real_end = time::do_gettimeofday().as_duration();
+        // println!("ocall time = {:?}", real_end - real_start);
+        // let real_end2 = time::do_gettimeofday().as_duration();
+        // println!("ocall time = {:?}", real_end2 - real_end);
+        // let real_end3 = time::do_gettimeofday().as_duration();
+        // println!("ocall time = {:?}", real_end3 - real_end2);
+        // let consume = (real_end - real_start).as_micros() as usize;
+        // COMMIT_TIME_TOTAL.fetch_add(consume, Ordering::Relaxed );
+        // println!("COMMIT_TIME_TOTAL = {:?} us", COMMIT_TIME_TOTAL.load(Ordering::Relaxed));
         Ok(())
     }
 
@@ -217,6 +235,8 @@ impl UserRegionMem {
         //     }
         // }
 
+        // let real_start = time::do_gettimeofday().as_duration();
+
         #[cfg(not(feature = "sim_mode"))]
         {
             if size == PAGE_SIZE {
@@ -230,6 +250,8 @@ impl UserRegionMem {
         #[cfg(feature = "sim_mode")]
         unreachable!();
 
+        // let real_end = time::do_gettimeofday().as_duration();
+        // println!("commit memory time: {:?}", real_end-real_start);
         Ok(())
     }
 
@@ -391,10 +413,10 @@ impl EPCMemType {
     ) -> Result<()> {
         // PT_GROWSDOWN should only be applied to stack segment or a segment mapped with the MAP_GROWSDOWN flag set.
         // Since the memory are managed by our own, mprotect ocall shouldn't use this flag. Otherwise, EINVAL will be thrown.
-        let mut prot = new_protection.clone();
+        let mut prot = new_protection;
         prot.remove(VMPerms::GROWSDOWN);
 
-        let mut current_prot = current_protection.clone();
+        let mut current_prot = current_protection;
         current_prot.remove(VMPerms::GROWSDOWN);
 
         match self {
@@ -409,7 +431,7 @@ impl EPCMemType {
 }
 
 pub fn commit_memory(start_addr: usize, size: usize, new_perms: Option<VMPerms>) -> Result<()> {
-    trace!(
+    debug!(
         "commit epc: {:?}, new permission: {:?}",
         VMRange::new_with_size(start_addr, size).unwrap(),
         new_perms
@@ -451,10 +473,9 @@ pub fn enclave_page_fault_handler(
 ) -> Result<()> {
     let pf_addr = exception_info.faulting_address as usize;
     let pf_errcd = exception_info.error_code;
-    trace!(
+    debug!(
         "enclave page fault caught, pf_addr = 0x{:x}, error code = {:?}",
-        pf_addr,
-        pf_errcd
+        pf_addr, pf_errcd
     );
 
     USER_SPACE_VM_MANAGER.handle_page_fault(rip, pf_addr, pf_errcd, kernel_triggers)?;
@@ -490,6 +511,10 @@ extern "C" {
 struct sec_info_t {
     flags: u64,
     reserved: [u64; 7],
+}
+
+lazy_static! {
+    static ref SI_COMMIT_MEMORY: sec_info_t = sec_info_t::new_for_commit_memory();
 }
 
 impl sec_info_t {
@@ -529,7 +554,7 @@ impl EDMMLocalApi {
         let si = sec_info_t::new_for_commit_memory();
         let mut page = start_addr;
         while page < start_addr + size {
-            info!("do_eaccept");
+            // info!("do_eaccept");
             let ret = unsafe { do_eaccept(&si as *const sec_info_t, page) };
             if ret != 0 {
                 panic!("ret = {}", ret);
@@ -546,7 +571,7 @@ impl EDMMLocalApi {
         let mut dest_page = addr;
         let mut src_raw_ptr = data.as_ptr() as usize;
         while dest_page < addr + size {
-            info!("do_eacceptcopy");
+            // info!("do_eacceptcopy");
             let ret = unsafe { do_eacceptcopy(&si as *const sec_info_t, dest_page, src_raw_ptr) };
             if ret != 0 {
                 panic!("ret = {}", ret);
@@ -581,12 +606,12 @@ impl EDMMLocalApi {
         let si = sec_info_t::new_for_modify_permission(&new_protection);
         let mut page = addr;
         while page < addr + length {
-            assert!(page % PAGE_SIZE == 0);
+            debug_assert!(page % PAGE_SIZE == 0);
 
             if new_protection.bits() | current_protection.bits() != current_protection.bits() {
                 let ret = unsafe { do_emodpe(&si as *const sec_info_t, page) };
                 // Check this return value is useless. RAX is set to SE_EMODPE which is 6 defined in SDK.
-                info!("do_emodpe ret = {:?}", ret);
+                // info!("do_emodpe ret = {:?}", ret);
             }
             // If new permission is RWX, no EMODPR needed in untrusted part, hence no EACCEPT
             if new_protection != VMPerms::ALL {
@@ -608,7 +633,7 @@ impl EDMMLocalApi {
                 )
             };
             if ret != 0 {
-                panic!();
+                panic!("ret = {:?}", ret);
             }
         }
 

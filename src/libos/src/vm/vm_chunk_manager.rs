@@ -449,6 +449,27 @@ impl ChunkManager {
         Ok(())
     }
 
+    pub fn try_commit_vma(&mut self) {
+        trace!("try commit vma for this chunk: {:?}", self.range);
+
+        let mut vmas_cursor = self.vmas.cursor_mut();
+        vmas_cursor.move_next(); // move to the first element of the tree
+        while !vmas_cursor.is_null() {
+            let vma = vmas_cursor.get().unwrap().vma();
+            if !vma.suitable_to_commit_during_wait() {
+                vmas_cursor.move_next();
+                continue;
+            }
+
+            let mut vma = vma.clone();
+            vma.commit_current_vma_during_waiting()
+                .expect("commit memory failure");
+
+            vmas_cursor.replace_with(VMAObj::new_vma_obj(vma));
+            break;
+        }
+    }
+
     pub fn usage_percentage(&self) -> f32 {
         let total_size = self.range.size();
         let mut used_size = 0;

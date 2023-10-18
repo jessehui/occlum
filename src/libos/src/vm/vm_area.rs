@@ -12,7 +12,7 @@ use std::ops::{Deref, DerefMut};
 // Commit memory size unit when the #PF occurs.
 const COMMIT_SIZE_UNIT: usize = 4 * KB;
 // Commit the whole VMA when this threshold reaches.
-const PF_NUM_THRESHOLD: u64 = 3;
+const PF_NUM_THRESHOLD: u64 = 6;
 
 #[derive(Clone, Debug)]
 pub struct VMArea {
@@ -196,6 +196,13 @@ impl VMArea {
 
     pub fn is_fully_committed(&self) -> bool {
         self.pages.is_none()
+    }
+
+    pub fn suitable_to_commit_during_wait(&self) -> bool {
+        self.size() != 0
+            && self.perms() != VMPerms::NONE
+            && !self.is_fully_committed()
+            && self.pf_count >= 1
     }
 
     pub fn is_partially_committed(&self) -> bool {
@@ -766,7 +773,7 @@ impl VMArea {
     }
 
     // Only used to handle PF triggered by the kernel
-    fn commit_current_vma_whole(&mut self) -> Result<()> {
+    pub fn commit_current_vma_whole(&mut self) -> Result<()> {
         debug_assert!(!self.is_fully_committed());
         // debug_assert!(self.backed_file().is_none());
 
@@ -775,6 +782,35 @@ impl VMArea {
             self.init_memory_internal(&range, None).unwrap();
         }
         self.pages = None;
+
+        Ok(())
+    }
+
+    const COMMIT_SIZE_DURING_WAITING: usize = 4 * MB;
+    pub fn commit_current_vma_during_waiting(&mut self) -> Result<()> {
+        debug_assert!(!self.is_fully_committed());
+        // debug_assert!(self.backed_file().is_none());
+
+        let mut total_commit_size = 0;
+        let mut uncommitted_ranges = self.pages.as_ref().unwrap().get_ranges(false);
+        for range in uncommitted_ranges.iter_mut() {
+            info!("uncommitted range = {:?}", range);
+            if range.size() > Self::COMMIT_SIZE_DURING_WAITING {
+                range.resize(Self::COMMIT_SIZE_DURING_WAITING);
+            }
+            info!("commit range: {:?} during waiting", range);
+            self.init_memory_internal(&range, None).unwrap();
+            total_commit_size += range.size();
+            if range.size() >= Self::COMMIT_SIZE_DURING_WAITING {
+                break;
+            }
+        }
+
+        self.pf_count += 1;
+        if self.pages().is_fully_committed() {
+            trace!("vma is fully committed");
+            self.pages = None;
+        }
 
         Ok(())
     }

@@ -255,6 +255,40 @@ impl Chunk {
         }
     }
 
+    pub fn try_handle_page_fault(
+        &self,
+        rip: usize,
+        pf_addr: usize,
+        errcd: u32,
+        kernel_triggers: bool,
+    ) -> Result<()> {
+        let internal = &self.internal;
+        match self.internal() {
+            ChunkType::SingleVMA(vma) => {
+                let vma = vma.try_lock();
+                if vma.is_err() {
+                    return_errno!(EAGAIN, "current single-vma chunk is busy");
+                }
+                let mut vma = vma.unwrap();
+                debug_assert!(vma.contains(pf_addr));
+                return vma.handle_page_fault(rip, pf_addr, errcd, kernel_triggers);
+            }
+            ChunkType::MultiVMA(internal_manager) => {
+                let manager = internal_manager.try_lock();
+                if manager.is_err() {
+                    return_errno!(EAGAIN, "current multi-vma chunk is busy");
+                }
+                let mut manager = manager.unwrap();
+                return manager.chunk_manager.handle_page_fault(
+                    rip,
+                    pf_addr,
+                    errcd,
+                    kernel_triggers,
+                );
+            }
+        }
+    }
+
     pub fn is_free_range(&self, request_range: &VMRange) -> bool {
         match self.internal() {
             ChunkType::SingleVMA(_) => false, // single-vma chunk can't be free

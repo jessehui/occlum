@@ -552,7 +552,7 @@ impl ProcessVM {
             } else if !flags.contains(MMapFlags::MAP_ANONYMOUS) {
                 // Use commit-now policy for file-backed mmap. We tried the commit-on-demand policy, but didn't get any performance gain at all.
                 // However, the path for file-backed mmap with commit-on-demand policy is ready. We can enable this whenever needed.
-                PagePolicy::CommitOnDemand
+                PagePolicy::CommitNow
             } else {
                 PagePolicy::CommitOnDemand
             }
