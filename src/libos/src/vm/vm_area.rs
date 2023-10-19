@@ -296,7 +296,7 @@ impl VMArea {
     }
 
     pub fn modify_permissions_for_committed_pages(
-        &self,
+        &mut self,
         current_perms: VMPerms,
         new_perms: VMPerms,
     ) {
@@ -306,6 +306,15 @@ impl VMArea {
             let committed = true;
             for range in self.pages().get_ranges(committed) {
                 self.modify_protection_force(Some(&range), current_perms, new_perms);
+            }
+        } else {
+            debug_assert!(self.is_reserved_only());
+            if current_perms == VMPerms::NONE {
+                info!(
+                    "current vma is_reserved_only. commit this whole previous VMperms:None = {:?}",
+                    current_perms
+                );
+                self.commit_current_vma_whole();
             }
         }
     }
@@ -386,6 +395,11 @@ impl VMArea {
     }
 
     pub fn set_perms(&mut self, new_perms: VMPerms) {
+        info!(
+            "current_perms = {:?}, new_perms = {:?}",
+            self.perms(),
+            new_perms
+        );
         self.perms = new_perms;
     }
 
@@ -786,7 +800,7 @@ impl VMArea {
         Ok(())
     }
 
-    const COMMIT_SIZE_DURING_WAITING: usize = 4 * MB;
+    const COMMIT_SIZE_DURING_WAITING: usize = 2 * MB;
     pub fn commit_current_vma_during_waiting(&mut self) -> Result<()> {
         debug_assert!(!self.is_fully_committed());
         // debug_assert!(self.backed_file().is_none());
