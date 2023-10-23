@@ -752,8 +752,9 @@ impl InternalVMManager {
                         let mut vma = new_chunk.get_vma_for_single_vma_chunk();
                         // Reset memory permissions
                         if !vma.perms().is_default() {
+                            let current_perms = vma.perms();
                             vma.modify_permissions_for_committed_pages(
-                                vma.perms(),
+                                current_perms,
                                 VMPerms::default(),
                             )
                         }

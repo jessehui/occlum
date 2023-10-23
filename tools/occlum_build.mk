@@ -114,7 +114,7 @@ $(IMAGE_CONFIG_JSON):
 # If image dir not exist, just use the secure Occlum FS image
 ifneq ($(wildcard $(IMAGE)/. ),)
 $(SECURE_IMAGE_MAC):
-$(SECURE_IMAGE): $(IMAGE) $(IMAGE_DIRS) $(IMAGE_FILES) $(SEFS_CLI_SIM) $(SIGNED_SEFS_CLI_LIB)
+$(SECURE_IMAGE):
 	@echo "Building new image..."
 	@rm -rf build/mount
 	@mkdir -p build/mount/

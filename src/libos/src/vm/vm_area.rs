@@ -289,7 +289,7 @@ impl VMArea {
     }
 
     pub fn modify_permissions_for_committed_pages(
-        &self,
+        &mut self,
         current_perms: VMPerms,
         new_perms: VMPerms,
     ) {
@@ -299,6 +299,17 @@ impl VMArea {
             let committed = true;
             for range in self.pages().get_ranges(committed) {
                 self.modify_protection_force(Some(&range), current_perms, new_perms);
+            }
+        } else {
+            debug_assert!(self.is_reserved_only());
+            const COMMIT_THRESHOLD: usize = 8 * PAGE_SIZE;
+            if current_perms == VMPerms::NONE && self.size() <= COMMIT_THRESHOLD {
+                warn!(
+                    "current vma is_reserved_only. commit this whole previous VMperms:None = {:?}",
+                    self
+                );
+                self.commit_current_vma_whole();
+                // self.old_perms = Some(current_perms);
             }
         }
     }
@@ -310,7 +321,7 @@ impl VMArea {
         errcd: u32,
         kernel_triggers: bool,
     ) -> Result<()> {
-        trace!("PF vma = {:?}", self);
+        warn!("PF vma = {:?}", self);
         if (self.perms() == VMPerms::NONE)
             || (crate::exception::check_rw_bit(errcd) == false
                 && !self.perms().contains(VMPerms::READ))
