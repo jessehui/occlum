@@ -112,9 +112,22 @@ impl EPCAllocator for ReservedMem {
     ) -> Result<()> {
         let mut ret_val = 0;
         let ret = if rsgx_is_supported_EDMM() {
-            unsafe {
-                sgx_tprotect_rsrv_mem(addr as *const c_void, length, new_protection.bits() as i32)
+            #[cfg(not(feature = "sim_mode"))]
+            {
+                info!(
+                    "modify_permission raw current_protection: {:?}, new_protection: {:?}",
+                    current_protection, new_protection
+                );
+                EDMMLocalApi::modify_permissions(addr, length, current_protection, new_protection)
+                    .unwrap();
+                sgx_status_t::SGX_SUCCESS
             }
+            #[cfg(feature = "sim_mode")]
+            unreachable!()
+
+            // unsafe {
+            //     sgx_tprotect_rsrv_mem(addr as *const c_void, length, new_protection.bits() as i32)
+            // }
         } else {
             // For platforms without EDMM, sgx_tprotect_rsrv_mem is actually useless.
             // However, at least we can set pages to desired protections in the host kernel page table.
@@ -426,7 +439,7 @@ pub fn enclave_page_fault_handler(
 ) -> Result<()> {
     let pf_addr = exception_info.faulting_address as usize;
     let pf_errcd = exception_info.error_code;
-    debug!(
+    info!(
         "enclave page fault caught, pf_addr = 0x{:x}, error code = {:?}",
         pf_addr, pf_errcd
     );

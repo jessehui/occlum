@@ -3,7 +3,7 @@
         "kernel_space_stack_size": "1MB",
         "kernel_space_heap_size": "1MB",
         "kernel_space_heap_max_size": "40MB",
-        "user_space_size": "1MB",
+        "user_space_size": "600MB",
         "user_space_max_size": "600MB",
         "init_num_of_threads": 2,
         "max_num_of_threads": 64

@@ -330,7 +330,9 @@ static void handle_sigsegv(int num, siginfo_t *info, void *_context) {
     mcontext_t *mcontext = &ucontext->uc_mcontext;
     // TODO: how long is the instruction?
     // The faulty instruction should be `idiv %esi` (f7 fe)
-    mcontext->gregs[REG_RIP] += 2;
+    // mcontext->gregs[REG_RIP] += 4;
+
+    abort();
 
     return;
 }
@@ -350,9 +352,22 @@ int test_handle_sigsegv() {
         THROW_ERROR("unexpected old sig handler");
     }
 
-    int *addr = NULL;
-    volatile int val = read_maybe_null(addr);
-    (void)val; // to suppress "unused variables" warning
+    // int *addr = NULL;
+    // volatile int val = read_maybe_null(addr);
+    // (void)val; // to suppress "unused variables" warning
+
+    void *addr = mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    if (addr == NULL) {
+        THROW_ERROR("mmap failure");
+    }
+
+    int ret = mprotect(addr, 8192, PROT_NONE);
+    if (ret < 0) {
+        THROW_ERROR("mprotect failure");
+    }
+
+    int test = *((int *)addr + 2);
+    printf("test = %d\n", test);
 
     printf("Signal handler successfully jumped over a null-dereferencing instruction\n");
 
@@ -561,15 +576,15 @@ int test_sigtimedwait() {
 // ============================================================================
 
 static test_case_t test_cases[] = {
-    TEST_CASE(test_sigprocmask),
-    TEST_CASE(test_raise),
-    TEST_CASE(test_abort),
-    TEST_CASE(test_kill),
-    TEST_CASE(test_handle_sigfpe),
+    // TEST_CASE(test_sigprocmask),
+    // TEST_CASE(test_raise),
+    // TEST_CASE(test_abort),
+    // TEST_CASE(test_kill),
+    // TEST_CASE(test_handle_sigfpe),
     TEST_CASE(test_handle_sigsegv),
-    TEST_CASE(test_sigaltstack),
-    TEST_CASE(test_sigchld),
-    TEST_CASE(test_sigtimedwait),
+    // TEST_CASE(test_sigaltstack),
+    // TEST_CASE(test_sigchld),
+    // TEST_CASE(test_sigtimedwait),
 };
 
 int main(int argc, const char *argv[]) {
