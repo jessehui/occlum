@@ -101,7 +101,6 @@ impl ChunkManager {
         if let VMMapAddr::Force(addr) = addr {
             self.munmap(addr, size)?;
         }
-        trace!("mmap options = {:?}", options);
 
         // Find and allocate a new range for this mmap request
         let new_range = self
@@ -501,7 +500,8 @@ impl VMRemapParser for ChunkManager {
 
 impl Drop for ChunkManager {
     fn drop(&mut self) {
-        info!("drop chunk manager = {:?}", self);
+        // Make it same as the level when initialized
+        debug!("drop chunk manager = {:?}", self);
         assert!(self.is_empty());
         assert!(self.free_size == self.range.size());
         assert!(self.free_manager.free_size() == self.range.size());
