@@ -272,6 +272,12 @@ impl ChunkManager {
                 continue;
             }
 
+            if let Some((file_ref, _)) = containing_vma.writeback_file() {
+                if !file_ref.access_mode().unwrap().writable() && new_perms.can_write() {
+                    return_errno!(EACCES, "file is not writable");
+                }
+            }
+
             let old_perms = containing_vma.perms();
             if new_perms == old_perms {
                 containing_vmas.move_next();
