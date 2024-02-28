@@ -62,7 +62,7 @@ jobs:
       run:  docker exec ${{ github.job }} bash -c "cd /root/occlum; OCCLUM_LOG_LEVEL=trace SGX_MODE=SIM make test"
 
     - name: Integration test with Glibc
-      run:  docker exec ${{ github.job }} bash -c "cd /root/occlum; OCCLUM_LOG_LEVEL=trace SGX_MODE=SIM make test-glibc"
+      run:  docker exec ${{ github.job }} bash -c "cd /root/occlum; SGX_MODE=SIM make test-glibc"
 
     - name: Show failed cases
       if: ${{ failure() }}
