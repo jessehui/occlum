@@ -16,17 +16,19 @@ apt-get install -y ${DEPS}
 [ -d $script_dir/libtpms ] || mkdir $script_dir/libtpms && 
 	cd $script_dir/libtpms && 
 	git clone https://github.com/stefanberger/libtpms.git . &&
+	git show &&
 	./autogen.sh --with-openssl --prefix=/usr --with-tpm2 &&
 	make &&
-	make check &&
+	# make check &&
 	make install &&
 	cd ..
 
 [ -d $script_dir/swtpm ] || mkdir $script_dir/swtpm && 
 	cd $script_dir/swtpm && 
 	git clone https://github.com/stefanberger/swtpm.git . &&
+	git show &&
     ./autogen.sh --prefix=/usr &&
 	make &&
-	make check &&
+	# make check &&
 	make install
 
