@@ -1375,7 +1375,7 @@ jobs:
 #       run: docker exec ${{ github.job }} bash -c "cd /root/occlum/demos && rm -rf ./runtime_boot"
 
   Swtpm_test:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         features: [Legacy, IO_Uring]
